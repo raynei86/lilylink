@@ -14,7 +14,7 @@
                                    (lilylink::pitch-octave (lilylink::note-pitch n))))
                          (lilylink::chord-notes e))))
         ((typep e 'lilylink::rest-event) "r")
-        ((and (listp e) (eq (car e) :barline)) "|")
+        ((typep e 'lilylink::barline) "|")
         (t "cmd")))
 
 (defun pitch-sequence (src)

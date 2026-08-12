@@ -51,9 +51,13 @@ convert-string / convert-file
   `measure`s.
 - `score` — a list of `staff`s (currently always one).
 
-`\time`, `\key`, `\clef`, and bar checks are not model objects; they flow
-through the pipeline as keyword-tagged lists (`(:time beats beat-type)`,
-`(:key pitch mode)`, `(:clef keyword octave-shift)`, `(:barline)`).
+`\time`, `\key`, `\clef`, and bar checks are first-class events too:
+`time-change` (beats/beat-type), `key-change` (pitch/mode), `clef-change`
+(clef/octave-shift), and `barline`. `build-score` dispatches over them with a
+single `etypecase`.
+
+Dependency: `alexandria` (used for `when-let`/`if-let` in the parser); there is
+no runtime dependency on LilyPond.
 
 ### Public API (`src/main.lisp`)
 
@@ -158,8 +162,8 @@ through the pipeline as keyword-tagged lists (`(:time beats beat-type)`,
   `<type>`, optional `<dot/>`. Rests: `<note><rest/>…`. Chords: `<chord/>`.
 - `divisions` is computed globally as `2 ^ max(log + dots)` over all
   durations, so every `<duration>` is an integer.
-- XML escaping (`&`, `<`, `>`, `"`) is applied by `xml-escape`
-  (currently unused since no text content is emitted).
+- All emitted element and attribute names are fixed literals; no user-supplied
+  text reaches the XML, so no escaping is required.
 
 ## What is not implemented
 

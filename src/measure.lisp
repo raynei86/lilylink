@@ -1,7 +1,7 @@
 (in-package #:lilylink)
 
 ;;; Convert a flat list of events (notes, rests, chords, and command
-;;; markers) into a SCORE object with a single staff, splitting events into
+;;; objects) into a SCORE object with a single staff, splitting events into
 ;;; measures according to the time signature and bar checks.
 
 (defun step-semitone (step)
@@ -60,36 +60,34 @@ For minor keys, compute via the relative major."
                                              (duration-dots duration))))))
       (open-measure)
       (dolist (ev events)
-        (cond
-          ((and (listp ev) (eq (car ev) :time))
-           (let ((beats (second ev)) (bt (third ev)))
-             (setf (staff-time-beats staff) beats)
-             (setf (staff-time-beat-type staff) bt)
-             (setf measure-length (measure-length-value beats bt))
-             (mark-attrs)))
-          ((and (listp ev) (eq (car ev) :key))
-           (setf (staff-key-fifths staff)
-                 (key-fifths (pitch-step (second ev)) (pitch-alter (second ev))
-                             (third ev)))
-           (setf (staff-key-mode staff) (third ev))
+        (etypecase ev
+          (time-change
+           (setf (staff-time-beats staff) (time-change-beats ev))
+           (setf (staff-time-beat-type staff) (time-change-beat-type ev))
+           (setf measure-length (measure-length-value (time-change-beats ev)
+                                                      (time-change-beat-type ev)))
            (mark-attrs))
-          ((and (listp ev) (eq (car ev) :clef))
-           (setf (staff-clef staff) (second ev))
-           (setf (staff-clef-octave-shift staff) (third ev))
+          (key-change
+           (let ((p (key-change-pitch ev)))
+             (setf (staff-key-fifths staff)
+                   (key-fifths (pitch-step p) (pitch-alter p) (key-change-mode ev)))
+             (setf (staff-key-mode staff) (key-change-mode ev)))
            (mark-attrs))
-          ((and (listp ev) (eq (car ev) :barline))
+          (clef-change
+           (setf (staff-clef staff) (clef-change-clef ev))
+           (setf (staff-clef-octave-shift staff) (clef-change-octave-shift ev))
+           (mark-attrs))
+          (barline
            (when (measure-events current)
              (close-measure)
              (open-measure)
              (setf accumulated 0)))
-          ((typep ev 'note)
+          (note
            (add-event ev (note-duration ev)))
-          ((typep ev 'rest-event)
+          (rest-event
            (add-event ev (rest-duration ev)))
-          ((typep ev 'chord)
-           (add-event ev (chord-duration ev)))
-          (t
-           (error "Unknown event ~S" ev)))
+          (chord
+           (add-event ev (chord-duration ev))))
         (when (and current (>= accumulated measure-length))
           (close-measure)
           (open-measure)

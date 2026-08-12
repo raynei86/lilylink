@@ -2,26 +2,22 @@
 
 ;;; Emit the intermediate representation as MusicXML (score-partwise).
 
-(defun xml-escape (string)
-  (with-output-to-string (out)
-    (loop for c across string
-          do (case c
-               (#\& (write-string "&amp;" out))
-               (#\< (write-string "&lt;" out))
-               (#\> (write-string "&gt;" out))
-               (#\" (write-string "&quot;" out))
-               (t (write-char c out))))))
+(defparameter +duration-type-names+
+  #("whole" "half" "quarter" "eighth" "16th" "32nd" "64th"
+    "128th" "256th" "512th" "1024th"))
+
+(defparameter +clef-signs+
+  '((:treble "G" 2) (:alto "C" 3) (:tenor "C" 4) (:bass "F" 4)))
 
 (defun duration-type-name (log)
-  (aref #("whole" "half" "quarter" "eighth" "16th" "32nd" "64th"
-          "128th" "256th" "512th" "1024th")
-        log))
+  (aref +duration-type-names+ log))
 
 (defun duration-in-divisions (duration divisions)
   (round (* divisions 4 (duration-value duration))))
 
 (defun emit-pitch (s pitch)
-  (format s "<pitch><step>~C</step>" (char-upcase (pitch-step-letter (pitch-step pitch))))
+  (format s "<pitch><step>~C</step>"
+          (char-upcase (pitch-step-letter (pitch-step pitch))))
   (unless (zerop (pitch-alter pitch))
     (format s "<alter>~A</alter>" (pitch-alter pitch)))
   (format s "<octave>~D</octave></pitch>" (pitch-octave pitch)))
@@ -62,16 +58,16 @@
     (t (error "Cannot emit event ~S" ev))))
 
 (defun clef-sign-line (clef)
-  (ecase clef
-    (:treble (values "G" 2))
-    (:alto (values "C" 3))
-    (:tenor (values "C" 4))
-    (:bass (values "F" 4))))
+  (let ((entry (assoc clef +clef-signs+)))
+    (when (null entry)
+      (error "Unknown clef ~S" clef))
+    (destructuring-bind (sign line) (cdr entry)
+      (values sign line))))
 
 (defun emit-attributes (s data divisions)
   "Emit <attributes> from DATA, a plist snapshot of staff attributes."
-  (let* ((clef (getf data :clef))
-         (octave-shift (getf data :clef-octave-shift)))
+  (let ((clef (getf data :clef))
+        (octave-shift (getf data :clef-octave-shift)))
     (multiple-value-bind (sign line) (clef-sign-line clef)
       (format s "<attributes><divisions>~D</divisions>" divisions)
       (format s "<key><fifths>~D</fifths><mode>~A</mode></key>"

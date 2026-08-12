@@ -20,6 +20,20 @@
   ((notes :initarg :notes :accessor chord-notes)
    (duration :initarg :duration :accessor chord-duration)))
 
+(defclass time-change ()
+  ((beats :initarg :beats :accessor time-change-beats)
+   (beat-type :initarg :beat-type :accessor time-change-beat-type)))
+
+(defclass key-change ()
+  ((pitch :initarg :pitch :accessor key-change-pitch)
+   (mode :initarg :mode :accessor key-change-mode)))
+
+(defclass clef-change ()
+  ((clef :initarg :clef :accessor clef-change-clef)
+   (octave-shift :initarg :octave-shift :initform 0 :accessor clef-change-octave-shift)))
+
+(defclass barline () ())
+
 (defclass measure ()
   ((number :initarg :number :accessor measure-number)
    (events :initform nil :accessor measure-events)
@@ -51,8 +65,22 @@
 (defun make-chord (notes duration)
   (make-instance 'chord :notes notes :duration duration))
 
+(defun make-time-change (beats beat-type)
+  (make-instance 'time-change :beats beats :beat-type beat-type))
+
+(defun make-key-change (pitch mode)
+  (make-instance 'key-change :pitch pitch :mode mode))
+
+(defun make-clef-change (clef octave-shift)
+  (make-instance 'clef-change :clef clef :octave-shift octave-shift))
+
+(defun make-barline ()
+  (make-instance 'barline))
+
+(defparameter +pitch-step-letters+ "cdefgab")
+
 (defun pitch-step-letter (step)
-  (aref "cdefgab" step))
+  (aref +pitch-step-letters+ step))
 
 (defun pitch-num (pitch)
   (+ (* 7 (pitch-octave pitch)) (pitch-step pitch)))

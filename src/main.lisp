@@ -1,5 +1,6 @@
 (uiop:define-package lilylink
-  (:use #:cl #:uiop)
+  (:use #:cl)
+  (:import-from #:alexandria #:when-let #:if-let)
   (:export #:convert-string
            #:convert-file
            #:tokenize

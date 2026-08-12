@@ -7,12 +7,23 @@
          :message (apply #'format nil fmt args)
          :line line :col col))
 
+(defun duration-log-from-num (num)
+  "Log2 of NUM, which must be a positive power of two."
+  (unless (and (integerp num) (plusp num))
+    (lilylink-error-at 0 0 "Invalid duration number ~S" num))
+  (let ((log (integer-length (1- num))))
+    (unless (= num (expt 2 log))
+      (lilylink-error-at 0 0 "Invalid duration number ~S" num))
+    log))
+
 (defun tokenize (string)
   "Tokenize a LilyPond source string into a list of TOKEN structs."
   (let ((len (length string))
         (pos 0)
         (line 1)
         (col 1)
+        (tok-line 1)
+        (tok-col 1)
         (tokens nil))
     (labels ((peekc ()
                (when (< pos len) (char string pos)))
@@ -27,10 +38,15 @@
                      (progn (incf line) (setf col 1))
                      (incf col))
                  c))
+             ;; Tokens always start at the beginning of a loop iteration, so
+             ;; push-tok reports the position captured there, not where the
+             ;; token finished being scanned.
              (push-tok (type value)
-               (push (make-token :type type :value value :line line :col col) tokens))
+               (push (make-token :type type :value value
+                                 :line tok-line :col tok-col)
+                     tokens))
              (err (fmt &rest args)
-               (lilylink-error-at line col fmt args))
+               (lilylink-error-at tok-line tok-col fmt args))
              (skip-comment ()
                (consume)  ; the %
                (if (and (peekc) (char= (peekc) #\{))
@@ -43,16 +59,20 @@
                      (unless (eofp) (consume) (consume)))
                    (loop until (or (eofp) (char= (peekc) #\Newline))
                          do (consume))))
-             (scan-number ()
-               (let ((digits nil))
-                 (loop while (and (peekc) (digit-char-p (peekc)))
-                       do (push (consume) digits))
-                 (let ((dots 0))
+             (scan-digits-and-dots ()
+               ;; Returns (values num dots) if a digit follows, else NIL.
+               (when (and (peekc) (digit-char-p (peekc)))
+                 (let ((digits nil)
+                       (dots 0))
+                   (loop while (and (peekc) (digit-char-p (peekc)))
+                         do (push (consume) digits))
                    (loop while (and (peekc) (char= (peekc) #\.))
                          do (consume) (incf dots))
-                   (push-tok :number
-                             (cons (parse-integer (coerce (nreverse digits) 'string))
-                                   dots)))))
+                   (values (parse-integer (coerce (nreverse digits) 'string))
+                           dots))))
+             (scan-number ()
+               (multiple-value-bind (num dots) (scan-digits-and-dots)
+                 (push-tok :number (cons num dots))))
              (note-parts (run)
                ;; Returns (values step alter fullp) for a letter run, or nil.
                (let ((first (char run 0)))
@@ -77,37 +97,30 @@
              (scan-duration-parts ()
                ;; Called when a digit follows a pitch/rest with no whitespace.
                ;; Returns (LOG . DOTS) or NIL without emitting a token.
-               (when (and (peekc) (digit-char-p (peekc)))
-                 (let ((digits nil)
-                       (dots 0))
-                   (loop while (and (peekc) (digit-char-p (peekc)))
-                         do (push (consume) digits))
-                   (loop while (and (peekc) (char= (peekc) #\.))
-                         do (consume) (incf dots))
-                   (cons (duration-log-from-num
-                          (parse-integer (coerce (nreverse digits) 'string)))
-                         dots))))
-              (scan-note-or-rest (run)
-                ;; After the letter run, octave marks, !/?, and adjacent duration.
-                (let ((c (char run 0)))
-                  (cond
-                    ((and (member c '(#\r #\s)) (= (length run) 1))
-                     (let ((duration (scan-duration-parts)))
-                       (push-tok :rest duration)))
-                    (t
-                     (multiple-value-bind (step alter fullp) (note-parts run)
-                       (if (and step fullp)
-                           (let ((mark 0))
-                             (loop while (and (peekc) (member (peekc) '(#\' #\,)))
-                                   do (if (char= (consume) #\')
-                                          (incf mark)
-                                          (decf mark)))
-                             ;; consume reminder/cautionary accidentals, ignore
-                             (loop while (and (peekc) (member (peekc) '(#\! #\?)))
-                                   do (consume))
-                             (let ((duration (scan-duration-parts)))
-                               (push-tok :pitch (list step alter mark duration))))
-                           (push-tok :word run)))))))
+               (multiple-value-bind (num dots) (scan-digits-and-dots)
+                 (when num
+                   (cons (duration-log-from-num num) dots))))
+             (scan-note-or-rest (run)
+               ;; After the letter run, octave marks, !/?, and adjacent duration.
+               (let ((c (char run 0)))
+                 (cond
+                   ((and (member c '(#\r #\s)) (= (length run) 1))
+                    (push-tok :rest (scan-duration-parts)))
+                   (t
+                    (multiple-value-bind (step alter fullp) (note-parts run)
+                      (if (and step fullp)
+                          (let ((mark 0))
+                            (loop while (and (peekc) (member (peekc) '(#\' #\,)))
+                                  do (if (char= (consume) #\')
+                                         (incf mark)
+                                         (decf mark)))
+                            ;; consume reminder/cautionary accidentals, ignore
+                            (loop while (and (peekc) (member (peekc) '(#\! #\?)))
+                                  do (consume))
+                            (push-tok :pitch
+                                      (list step alter mark
+                                            (scan-duration-parts))))
+                          (push-tok :word run)))))))
              (scan-word (run)
                (push-tok :word run))
              (scan-word-or-note ()
@@ -142,6 +155,7 @@
       (loop
         (when (eofp) (return))
         (let ((c (peekc)))
+          (setf tok-line line tok-col col)
           (cond
             ((or (char= c #\Space) (char= c #\Tab) (char= c #\Newline) (char= c #\Return))
              (consume))
@@ -158,16 +172,3 @@
             ((alpha-char-p c) (scan-word-or-note))
             (t (consume) (push-tok :other (string c))))))
       (nreverse tokens))))
-
-(defun duration-log-from-num (num)
-  "Compute log2 of NUM, which must be a power of two (>= 1)."
-  (when (or (not (integerp num)) (< num 1))
-    (lilylink-error-at 0 0 "Invalid duration number ~S" num))
-  (let ((n num)
-        (log 0))
-    (loop while (and (> n 1) (evenp n))
-          do (setf n (/ n 2))
-             (incf log))
-    (unless (= n 1)
-      (lilylink-error-at 0 0 "Invalid duration number ~S" num))
-    log))
