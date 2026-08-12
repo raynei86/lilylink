@@ -186,6 +186,44 @@ no runtime dependency on LilyPond.
 - All emitted element and attribute names are fixed literals; no user-supplied
   text reaches the XML, so no escaping is required.
 
+### Expressive marks (ch. 3)
+
+Attached marks follow a note/rest/chord, via `\name` commands, `-X` shorthand
+articulations (`->` `-.` `-^` `-!` `-+` `--` `-_`), or `^`/`_`/`-` prefixes
+(direction is parsed and ignored):
+
+- Articulations → `<articulations>`: `\accent`, `\staccato`, `\tenuto`,
+  `\marcato` (strong-accent), `\staccatissimo`, `\portato` (detached-legato),
+  `\espressivo` (other-articulation), and `\breathe` (breath-mark, attached to
+  the preceding note).
+- Ornaments → `<ornaments>`: `\trill`, `\mordent` (inverted-mordent),
+  `\prall` (mordent), `\turn`, `\reverseturn` (inverted-turn), `\slashturn`,
+  and the `\upmordent`/`\prallup`/`\haydnturn` … family (other-ornament).
+- Technical → `<technical>`: `\upbow`, `\downbow`, `\open`, `\stopped`,
+  `\flageolet` (harmonic), `\snappizzicato`, and `\thumb`/`\heel`/`\toe` …
+  (other-technical).
+- Dynamics → `<dynamics>`: `\ppppp`…`\p`, `\mp`, `\mf`, `\f`…`\fffff`,
+  `\fp`, `\sf`, `\sfz`, `\rfz`, `\n`; `\sff`/`\sp`/`\spp` as other-dynamics.
+- `\fermata` (and short/long/henze variants) → `<fermata/>`; the variants all
+  map to a plain fermata (MusicXML has no short/long types).
+
+Spanners:
+
+- Slurs `( … )` and phrasing slurs `\( … \)` → `<slur type="start|stop"
+  number=N>` in `<notations>`, matched by a nesting stack. Phrasing slurs use
+  the same element with an offset number (100 + N) since MusicXML has no
+  phrase-slur element.
+- Hairpins `\<`/`\>`/`\!` (and `\cr`/`\decr`/`\endcr`/`\enddecr`) →
+  `<wedge>` inside `<direction>` elements (siblings of `<note>`). An open
+  hairpin closes on `\!`, on an absolute dynamic, or when another hairpin
+  starts.
+- `\glissando` → `<glissando type="start|stop" number=N>` connecting to the
+  immediately following note.
+- `\startTrillSpan`/`\stopTrillSpan` → `<trill-mark/>` plus `<wavy-line>`.
+- `\arpeggio` on a chord → `<arpeggiate/>`, with `\arpeggioArrowUp`/`Down`
+  selecting the direction.
+- `\bendAfter ±N` → `<doit/>` (up) or `<falloff/>` (down).
+
 ## What is not implemented
 
 Anything not listed above is unsupported and will raise
@@ -210,11 +248,11 @@ chapters:
 
 ### Expressive marks (ch. 3)
 
-- Slurs `( … )`, phrasing slurs `\( … \)`.
-- Articulations and ornaments (`-.` `-^` `-+` `-!` `->` `\fermata`
-  `\prall` `\trill` …).
-- Dynamics (`\f`, `\p`, `\mf`, `\pp`, …) and hairpins (`\<` `\>` `\!`).
-- Text scripts (`^"…"`), glissando, arpeggio, breath marks.
+- Text scripts (`^"…"`), textual dynamics (`\cresc`, `\decresc`, `\dim`),
+  and `\after` (delayed marks).
+- Slur/hairpin styling commands (`\slurUp`, `\slurDashed`, …), `\=N` slur
+  labeling, and glissando mapping (`\glissandoMap`).
+- `< >` empty-chord carriers for dynamics-only placement.
 
 ### Repeats (ch. 4)
 
@@ -276,9 +314,11 @@ These are places where behavior is deliberately lenient or lossy:
   comments, commands, ties), relative-octave resolution (scale wrap, interval
   minimization, chords, nested blocks, no-start-pitch), explicit ties (chains,
   isolated durations, chord and chord-internal ties, unmatched-tie dropping),
-  duration decomposition, barline auto-splitting (notes, chords, rests), error
-  signaling, and MusicXML emission (structure, attributes, dotted notes, rests,
-  chords, tie markers, `\score` wrappers, file round-trip).
+  duration decomposition, barline auto-splitting (notes, chords, rests),
+  expressive marks (articulations, ornaments, dynamics, technical, slurs,
+  phrasing slurs, hairpins, glissando, trill spans, arpeggio, breath, bends),
+  error signaling, and MusicXML emission (structure, attributes, dotted notes,
+  rests, chords, tie and mark markers, `\score` wrappers, file round-trip).
 - Relative-octave behavior was cross-validated against the real `lilypond`
   binary (via `\displayMusic` and MIDI output), including the counterintuitive
   chord-octave-mark results and the "nested `\relative` leaves the enclosing
