@@ -84,6 +84,37 @@
       (ok (search "<rest/><duration>8</duration><type>half</type>" xml))
       (ok (not (search "<tie" xml))))))
 
+(deftest convert-marks
+  (testing "articulations, dynamics, ornaments, technical, fermata"
+    (let ((xml (lilylink:convert-string "\\relative c' { c4\\staccato d\\mf e\\trill f\\upbow g\\fermata }")))
+      (ok (search "<articulations><staccato/></articulations>" xml))
+      (ok (search "<dynamics><mf/></dynamics>" xml))
+      (ok (search "<ornaments><trill-mark/></ornaments>" xml))
+      (ok (search "<technical><up-bow/></technical>" xml))
+      (ok (search "<fermata/>" xml))))
+  (testing "shorthand articulations map correctly"
+    (let ((xml (lilylink:convert-string "\\relative c' { c4-. d-> e-^ f-! g-- a-_ }")))
+      (ok (search "<staccato/>" xml))
+      (ok (search "<accent/>" xml))
+      (ok (search "<strong-accent/>" xml))
+      (ok (search "<staccatissimo/>" xml))
+      (ok (search "<tenuto/>" xml))
+      (ok (search "<detached-legato/>" xml))))
+  (testing "a fermata on a rest"
+    (let ((xml (lilylink:convert-string "\\relative c' { r4\\fermata }")))
+      (ok (search "<rest/><duration>4</duration><type>quarter</type><notations><fermata/>" xml))))
+  (testing "marks survive auto-split on the first piece"
+    (let ((xml (lilylink:convert-string "\\relative c' { \\time 2/4 c1\\fermata }")))
+      (ok (search "<tie type=\"start\"/><type>half</type><notations><tied type=\"start\"/><fermata/></notations>" xml))))
+  (testing "marks survive auto-split of a chord"
+    (let ((xml (lilylink:convert-string "\\relative c' { \\time 2/4 <c e>1\\fermata }")))
+      (ok (search "<chord/><pitch><step>E</step>" xml))
+      (ok (search "<tied type=\"start\"/><fermata/></notations>" xml))))
+  (testing "mordents map by name"
+    (let ((xml (lilylink:convert-string "\\relative c' { c4\\mordent d\\prall }")))
+      (ok (search "<inverted-mordent/>" xml))
+      (ok (search "<mordent/>" xml)))))
+
 (deftest convert-file-roundtrip
   (testing "convert-file reads a .ly file"
     (let ((path (uiop:with-temporary-file (:pathname p :keep t :type "ly")

@@ -92,7 +92,8 @@ measure length integral in division units (i.e. 4*2^log divisible by each
            (setf accumulated 0))
 
          ;; Place a run of dyadic-dotted pieces of one pitch as tied notes.
-         (place-note-pieces (pitch pieces first-p last-p src-start src-stop)
+         (place-note-pieces (pitch pieces first-p last-p src-start src-stop
+                                  &optional attachments)
            (let ((np (length pieces)))
              (loop for piece in pieces
                    for j from 0
@@ -105,6 +106,9 @@ measure length integral in division units (i.e. 4*2^log divisible by each
                             (setf (note-tie-stop-p note) t))
                           (when (or has-next (and last-p (= (1+ j) np) src-start))
                             (setf (note-tie-start-p note) t))
+                          ;; Attached marks belong on the first split piece.
+                          (when (and first-p (zerop j) attachments)
+                            (setf (event-attachments note) attachments))
                           (push-event note dur))))))
 
          (place-note (note)
@@ -123,7 +127,8 @@ measure length integral in division units (i.e. 4*2^log divisible by each
                                                (decompose-units chunk divisions)
                                                (zerop i)
                                                (= (1+ i) nchunks)
-                                               src-start src-stop)
+                                               src-start src-stop
+                                               (event-attachments note))
                             (unless (= (1+ i) nchunks)
                               (next-measure)))))))
 
@@ -174,7 +179,12 @@ measure length integral in division units (i.e. 4*2^log divisible by each
                                                                 (setf (note-tie-start-p sub) t))
                                                               sub))
                                                           notes)))
-                                           (push-event (make-chord sub-notes dur) dur))))
+                                           (let ((sub-chord (make-chord sub-notes dur)))
+                                             ;; Attached marks go on the first split chord.
+                                             (when (and (zerop i) (zerop j))
+                                               (setf (event-attachments sub-chord)
+                                                     (event-attachments chord)))
+                                             (push-event sub-chord dur)))))
                               (unless (= (1+ i) nchunks)
                                 (next-measure)))))))))
       (open-measure)

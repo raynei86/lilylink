@@ -17,6 +17,71 @@
 (defun duration-in-divisions (duration divisions)
   (round (* divisions 4 (duration-value duration))))
 
+(defparameter +mark-container+
+  '((:articulation . "articulations")
+    (:other-articulation . "articulations")
+    (:ornament . "ornaments")
+    (:other-ornament . "ornaments")
+    (:technical . "technical")
+    (:other-technical . "technical")
+    (:dynamic . "dynamics")
+    (:other-dynamics . "dynamics")))
+
+(defun emit-mark-attrs (s mark)
+  (loop for (key value) on (mark-attrs mark) by #'cddr
+        do (format s " ~A=\"~A\"" (string-downcase key) value)))
+
+(defun emit-mark (s mark)
+  (format s "<~A" (mark-tag mark))
+  (emit-mark-attrs s mark)
+  (if (mark-text mark)
+      (format s ">~A</~A>" (mark-text mark) (mark-tag mark))
+      (write-string "/>" s)))
+
+(defun emit-mark-group (s container marks)
+  (write-string (format nil "<~A>" container) s)
+  (dolist (mark marks)
+    (emit-mark s mark))
+  (write-string (format nil "</~A>" container) s))
+
+;;; Write the children of <notations> (tied plus mark containers) for EVENT,
+;;; plus any EXTRA attachments (e.g. chord-level marks merged into the first
+;;; note).  Returns whether anything was written.
+(defun emit-notations-content (s event &optional extra)
+  (let ((written nil)
+        (marks (append extra (event-attachments event))))
+    (when (typep event 'note)
+      (when (note-tie-stop-p event)
+        (write-string "<tied type=\"stop\"/>" s)
+        (setf written t))
+      (when (note-tie-start-p event)
+        (write-string "<tied type=\"start\"/>" s)
+        (setf written t)))
+    (dolist (container '("ornaments" "technical" "articulations" "dynamics"))
+      (let ((group (remove-if-not
+                    (lambda (mark)
+                      (string= (cdr (assoc (mark-kind mark) +mark-container+))
+                               container))
+                    marks)))
+        (when group
+          (emit-mark-group s container group)
+          (setf written t))))
+    (dolist (mark marks)
+      (when (eq (mark-kind mark) :fermata)
+        (write-string "<fermata" s)
+        (emit-mark-attrs s mark)
+        (write-string "/>" s)
+        (setf written t)))
+    written))
+
+(defun emit-notations (s event &optional extra)
+  (let ((content (with-output-to-string (cs)
+                   (emit-notations-content cs event extra))))
+    (unless (string= content "")
+      (write-string "<notations>" s)
+      (write-string content s)
+      (write-string "</notations>" s))))
+
 (defun emit-pitch (s pitch)
   (format s "<pitch><step>~C</step>"
           (char-upcase (pitch-step-letter (pitch-step pitch))))
@@ -34,14 +99,14 @@
           (duration-type-name (duration-log duration)))
   (emit-dots s (duration-dots duration)))
 
-(defun emit-note (s note divisions &optional chord-p)
+(defun emit-note (s note divisions &optional chord-p extra)
   (write-string "<note>" s)
   (when chord-p (write-string "<chord/>" s))
   (emit-pitch s (note-pitch note))
   (format s "<duration>~D</duration>"
           (duration-in-divisions (note-duration note) divisions))
-  ;; <tie> (the sound tie) precedes <type>/<dot>; <tied> (the notated tie)
-  ;; lives inside a trailing <notations> block.
+  ;; <tie> (the sound tie) precedes <type>/<dot>; the notated marks live
+  ;; inside a trailing <notations> block.
   (when (note-tie-stop-p note)
     (write-string "<tie type=\"stop\"/>" s))
   (when (note-tie-start-p note)
@@ -49,23 +114,18 @@
   (format s "<type>~A</type>"
           (duration-type-name (duration-log (note-duration note))))
   (emit-dots s (duration-dots (note-duration note)))
-  (when (or (note-tie-start-p note) (note-tie-stop-p note))
-    (write-string "<notations>" s)
-    (when (note-tie-stop-p note)
-      (write-string "<tied type=\"stop\"/>" s))
-    (when (note-tie-start-p note)
-      (write-string "<tied type=\"start\"/>" s))
-    (write-string "</notations>" s))
+  (emit-notations s note extra)
   (write-string "</note>" s))
 
 (defun emit-rest (s rest divisions)
   (write-string "<note><rest/>" s)
   (emit-duration s (rest-duration rest) divisions)
+  (emit-notations s rest)
   (write-string "</note>" s))
 
 (defun emit-chord (s chord divisions)
   (let ((notes (chord-notes chord)))
-    (emit-note s (first notes) divisions)
+    (emit-note s (first notes) divisions nil (chord-attachments chord))
     (dolist (n (rest notes))
       (emit-note s n divisions t))))
 

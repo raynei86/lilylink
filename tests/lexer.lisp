@@ -50,4 +50,13 @@
                  '(:pitch :tie :pitch)))))
   (testing "quoted strings"
     (let ((tokens (lilylink:tokenize "\\version \"2.26.0\"")))
-      (ok (equal (lilylink::token-value (second tokens)) "2.26.0")))))
+      (ok (equal (lilylink::token-value (second tokens)) "2.26.0"))))
+  (testing "articulation shorthands and direction prefixes"
+    (let ((tokens (lilylink:tokenize "c4-. d^\\f e->")))
+      (ok (equal (mapcar #'lilylink::token-type tokens)
+                 '(:pitch :articulation :pitch :attach-up :command :pitch :articulation))))
+    (let* ((tokens (lilylink:tokenize "c4-. d-> e-!"))
+           (marks (loop for tok in tokens
+                        when (eq (lilylink::token-type tok) :articulation)
+                        collect (lilylink::token-value tok))))
+      (ok (equal marks '(:staccato :accent :staccatissimo))))))

@@ -13,14 +13,17 @@
   ((pitch :initarg :pitch :accessor note-pitch)
    (duration :initarg :duration :accessor note-duration)
    (tie-start :initarg :tie-start :initform nil :accessor note-tie-start-p)
-   (tie-stop :initarg :tie-stop :initform nil :accessor note-tie-stop-p)))
+   (tie-stop :initarg :tie-stop :initform nil :accessor note-tie-stop-p)
+   (attachments :initform nil :accessor note-attachments)))
 
 (defclass rest-event ()
-  ((duration :initarg :duration :accessor rest-duration)))
+  ((duration :initarg :duration :accessor rest-duration)
+   (attachments :initform nil :accessor rest-attachments)))
 
 (defclass chord ()
   ((notes :initarg :notes :accessor chord-notes)
-   (duration :initarg :duration :accessor chord-duration)))
+   (duration :initarg :duration :accessor chord-duration)
+   (attachments :initform nil :accessor chord-attachments)))
 
 (defclass time-change ()
   ((beats :initarg :beats :accessor time-change-beats)
@@ -35,6 +38,15 @@
    (octave-shift :initarg :octave-shift :initform 0 :accessor clef-change-octave-shift)))
 
 (defclass barline () ())
+
+;;; An attached expressive mark (articulation, ornament, dynamic, technical,
+;;; or fermata).  KIND selects the MusicXML container, TAG is the XML element
+;;; name, ATTRS an attribute plist, TEXT optional content for other-* marks.
+(defclass mark ()
+  ((kind :initarg :kind :accessor mark-kind)
+   (tag :initarg :tag :accessor mark-tag)
+   (text :initarg :text :initform nil :accessor mark-text)
+   (attrs :initarg :attrs :initform nil :accessor mark-attrs)))
 
 (defclass measure ()
   ((number :initarg :number :accessor measure-number)
@@ -66,6 +78,24 @@
 
 (defun make-chord (notes duration)
   (make-instance 'chord :notes notes :duration duration))
+
+(defun make-mark (spec)
+  "Build a MARK from a descriptor (KIND XML-TAG . PROPS); a :text prop is
+moved into the mark's text slot."
+  (destructuring-bind (kind tag &rest props) spec
+    (let ((text (getf props :text)))
+      (remf props :text)
+      (make-instance 'mark :kind kind :tag tag :text text :attrs props))))
+
+;;; Attached marks can be added to notes, rests, and chords uniformly.
+(defgeneric event-attachments (event))
+(defgeneric (setf event-attachments) (value event))
+(defmethod event-attachments ((n note)) (note-attachments n))
+(defmethod (setf event-attachments) (v (n note)) (setf (note-attachments n) v))
+(defmethod event-attachments ((r rest-event)) (rest-attachments r))
+(defmethod (setf event-attachments) (v (r rest-event)) (setf (rest-attachments r) v))
+(defmethod event-attachments ((c chord)) (chord-attachments c))
+(defmethod (setf event-attachments) (v (c chord)) (setf (chord-attachments c) v))
 
 (defun make-time-change (beats beat-type)
   (make-instance 'time-change :beats beats :beat-type beat-type))

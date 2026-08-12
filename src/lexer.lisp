@@ -155,7 +155,20 @@
                  (when (eofp)
                    (err "Unterminated string"))
                  (consume)  ; closing quote
-                 (push-tok :string str))))
+                 (push-tok :string str)))
+             (scan-dash ()
+               ;; Articulation shorthands (->, -., -^, -!, -+, --, -_), or a
+               ;; general dash attachment prefix (- followed by a command).
+               (consume)  ; the -
+               (case (peekc)
+                 (#\> (consume) (push-tok :articulation :accent))
+                 (#\. (consume) (push-tok :articulation :staccato))
+                 (#\^ (consume) (push-tok :articulation :marcato))
+                 (#\! (consume) (push-tok :articulation :staccatissimo))
+                 (#\+ (consume) (push-tok :articulation :stopped))
+                 (#\- (consume) (push-tok :articulation :tenuto))
+                 (#\_ (consume) (push-tok :articulation :portato))
+                 (t (push-tok :attach-dash nil)))))
       (loop
         (when (eofp) (return))
         (let ((c (peekc)))
@@ -171,6 +184,9 @@
             ((char= c #\|) (consume) (push-tok :barline nil))
             ((char= c #\/) (consume) (push-tok :slash nil))
             ((char= c #\~) (consume) (push-tok :tie nil))
+            ((char= c #\-) (scan-dash))
+            ((char= c #\^) (consume) (push-tok :attach-up nil))
+            ((char= c #\_) (consume) (push-tok :attach-down nil))
             ((char= c #\\) (scan-command))
             ((char= c #\") (scan-string))
             ((digit-char-p c) (scan-number))

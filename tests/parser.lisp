@@ -107,6 +107,31 @@
     (ok (equal (tie-seq "\\relative c' { c4~ s4 c4 }")
                '("c4~" "r" "c4")))))
 
+(defun event-marks (e)
+  (mapcar #'lilylink::mark-tag (lilylink::event-attachments e)))
+
+(deftest parse-marks
+  (testing "articulation and dynamic commands attach marks"
+    (let* ((events (lilylink:parse-music "\\relative c' { c4\\staccato d\\mf }"))
+           (marks (mapcar #'event-marks events)))
+      (ok (equal marks '(("staccato") ("mf"))))))
+  (testing "shorthand articulations"
+    (let* ((events (lilylink:parse-music "\\relative c' { c4-. d-> e-^ }"))
+           (marks (mapcar #'event-marks events)))
+      (ok (equal marks '(("staccato") ("accent") ("strong-accent"))))))
+  (testing "direction prefixes are parsed but ignored"
+    (let* ((events (lilylink:parse-music "\\relative c' { c4^\\f d_\\p }"))
+           (marks (mapcar #'event-marks events)))
+      (ok (equal marks '(("f") ("p"))))))
+  (testing "rests and chords carry marks"
+    (let* ((events (lilylink:parse-music "\\relative c' { r4\\fermata <c e>4\\mf }"))
+           (marks (mapcar #'event-marks events)))
+      (ok (equal marks '(("fermata") ("mf"))))))
+  (testing "ornament and technical names map by lookup"
+    (let* ((events (lilylink:parse-music "\\relative c' { c4\\mordent d\\prall e\\upbow }"))
+           (marks (mapcar #'event-marks events)))
+      (ok (equal marks '(("inverted-mordent") ("mordent") ("up-bow")))))))
+
 (deftest decompose-durations
   (testing "decompose-units produces dyadic-dotted pieces"
     (ok (equal (lilylink::decompose-units 6 4) '((2 . 1))))

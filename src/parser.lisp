@@ -98,13 +98,51 @@ duration (LOG . DOTS) or NIL, updating the parser's last-duration."
       (push (pitch-key pitch) (parser-pending-ties p)))
     note))
 
+;;; Expressive marks attached to a note, rest, or chord via \name commands,
+;;; -X shorthand articulations, and ^ / _ (direction, parsed and ignored) or
+;;; - prefixes.  The loop stops at the first token that is not an attachment.
+(defun parse-attached-mark (p event)
+  (let ((tok (peek-token p)))
+    (unless (and tok (eq (token-type tok) :command)
+                 (lookup-mark (token-value tok)))
+      (parser-error p "Expected an expressive mark after the attachment prefix"))
+    (let* ((cmd (token-value tok))
+           (spec (lookup-mark cmd)))
+      (advance-token p)
+      (push (make-mark spec) (event-attachments event)))))
+
+(defun parse-post-events (p event)
+  (loop
+    (let ((tok (peek-token p)))
+      (when (null tok) (return))
+      (case (token-type tok)
+        (:articulation
+         (let* ((tok (advance-token p))
+                (spec (lookup-mark (token-value tok))))
+           (unless spec
+             (parser-error p "Unknown articulation ~S" (token-value tok)))
+           (push (make-mark spec) (event-attachments event))))
+        (:command
+         (let* ((cmd (token-value tok))
+                (spec (lookup-mark cmd)))
+           (if spec
+               (progn (advance-token p)
+                      (push (make-mark spec) (event-attachments event)))
+               (return))))
+        ((:attach-dash :attach-up :attach-down)
+         (advance-token p)
+         (parse-attached-mark p event))
+        (t (return)))))
+  event)
+
 (defun parse-note-event (p ctx)
   (let* ((tok (advance-token p)))
     (destructuring-bind (step alter mark duration) (token-value tok)
       (let* ((pitch (resolve-pitch p ctx step alter mark))
              (tie-stop-p (pitch-in-pending p pitch)))
         (setf (parser-pending-ties p) nil)
-        (finish-note p pitch (effective-duration p duration) tie-stop-p)))))
+        (parse-post-events
+         p (finish-note p pitch (effective-duration p duration) tie-stop-p))))))
 
 (defun parse-rest-event (p ctx)
   (declare (ignore ctx))
@@ -113,7 +151,7 @@ duration (LOG . DOTS) or NIL, updating the parser's last-duration."
   (setf (parser-pending-ties p) nil)
   (let* ((tok (advance-token p))
          (duration (effective-duration p (token-value tok))))
-    (make-rest duration)))
+    (parse-post-events p (make-rest duration))))
 
 (defun parse-duration-event (p ctx)
   (declare (ignore ctx))
@@ -127,7 +165,7 @@ duration (LOG . DOTS) or NIL, updating the parser's last-duration."
          (pitch (parser-last-pitch p))
          (tie-stop-p (pitch-in-pending p pitch)))
     (setf (parser-pending-ties p) nil)
-    (finish-note p pitch duration tie-stop-p)))
+    (parse-post-events p (finish-note p pitch duration tie-stop-p))))
 
 (defun parse-chord (p ctx)
   (advance-token p)  ; consume <
@@ -174,8 +212,8 @@ duration (LOG . DOTS) or NIL, updating the parser's last-duration."
                                   (setf (note-tie-start-p note) t)
                                   (push (pitch-key pitch) (parser-pending-ties p)))
                                 note)))
-                          (nreverse entries))))
-      (make-chord notes duration))))
+                           (nreverse entries))))
+      (parse-post-events p (make-chord notes duration)))))
 
 (defun parse-time-args (p)
   (let ((a (expect-token p :number))
