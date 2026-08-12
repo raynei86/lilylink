@@ -166,6 +166,7 @@
             ((char= c #\>) (consume) (push-tok :chord-close nil))
             ((char= c #\|) (consume) (push-tok :barline nil))
             ((char= c #\/) (consume) (push-tok :slash nil))
+            ((char= c #\~) (consume) (push-tok :tie nil))
             ((char= c #\\) (scan-command))
             ((char= c #\") (scan-string))
             ((digit-char-p c) (scan-number))

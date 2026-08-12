@@ -54,6 +54,18 @@
       (ok (search "<score-partwise" xml))
       (ok (search "<step>C</step>" xml)))))
 
+(deftest convert-ties
+  (testing "tied notes emit sound and notated tie markers"
+    (let ((xml (lilylink:convert-string "\\relative c' { c4~ c4 }")))
+      (ok (search "<tie type=\"start\"/>" xml))
+      (ok (search "<tie type=\"stop\"/>" xml))
+      (ok (search "<tied type=\"start\"/>" xml))
+      (ok (search "<tied type=\"stop\"/>" xml))))
+  (testing "tie element order matches the schema"
+    (let ((xml (lilylink:convert-string "\\relative c' { c4~ c4 }")))
+      (ok (search "<duration>4</duration><tie type=\"start\"/><type>quarter</type>" xml))
+      (ok (search "<notations><tied type=\"start\"/></notations>" xml)))))
+
 (deftest convert-file-roundtrip
   (testing "convert-file reads a .ly file"
     (let ((path (uiop:with-temporary-file (:pathname p :keep t :type "ly")

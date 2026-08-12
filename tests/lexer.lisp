@@ -44,6 +44,10 @@
     (let ((tokens (lilylink:tokenize "\\relative c' \\time 4/4 \\key g \\major")))
       (ok (equal (mapcar #'lilylink::token-type tokens)
                  '(:command :pitch :command :number :slash :number :command :pitch :command)))))
+  (testing "tie tokens"
+    (let ((tokens (lilylink:tokenize "c4~ c4")))
+      (ok (equal (mapcar #'lilylink::token-type tokens)
+                 '(:pitch :tie :pitch)))))
   (testing "quoted strings"
     (let ((tokens (lilylink:tokenize "\\version \"2.26.0\"")))
       (ok (equal (lilylink::token-value (second tokens)) "2.26.0")))))

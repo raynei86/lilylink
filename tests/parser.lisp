@@ -66,6 +66,41 @@
     (ok (equal (pitch-sequence "\\relative c' { c4 \\relative { d' e f } }")
                '("c4" "d4" "e4" "f4")))))
 
+(defun tie-seq (src)
+  (mapcar (lambda (e)
+            (labels ((one (n)
+                       (format nil "~A~A" (pitch-string n)
+                               (cond ((and (lilylink::note-tie-start-p n)
+                                           (lilylink::note-tie-stop-p n))
+                                      "~-")
+                                     ((lilylink::note-tie-start-p n) "~")
+                                     ((lilylink::note-tie-stop-p n) "-")
+                                     (t "")))))
+              (cond ((typep e 'lilylink::note) (one e))
+                    ((typep e 'lilylink::chord)
+                     (format nil "[~{~A~^ ~}]"
+                             (mapcar #'one (lilylink::chord-notes e))))
+                    (t (pitch-string e)))))
+          (lilylink:parse-music src)))
+
+(deftest parse-ties
+  (testing "a tilde ties a note to the next same-pitch note"
+    (ok (equal (tie-seq "\\relative c' { c4~ c4 }") '("c4~" "c4-"))))
+  (testing "tie chains produce stop+start on the middle note"
+    (ok (equal (tie-seq "\\relative c' { c4~ c4~ c4 }")
+               '("c4~" "c4~-" "c4-"))))
+  (testing "ties work with isolated durations"
+    (ok (equal (tie-seq "\\relative c' { a2~ 4 }") '("a3~" "a3-"))))
+  (testing "whole-chord ties tie matching pitches"
+    (ok (equal (tie-seq "\\relative c' { <c e>4~ <c e>4 }")
+               '("[c4~ e4~]" "[c4- e4-]"))))
+  (testing "chord-internal ties tie only the marked note"
+    (ok (equal (tie-seq "\\relative c' { <c~ e>4 <c e>4 }")
+               '("[c4~ e4]" "[c4- e4]"))))
+  (testing "unmatched ties are dropped without leaking"
+    (ok (equal (tie-seq "\\relative c' { c4~ d4 c4 }")
+               '("c4~" "d4" "c4")))))
+
 (deftest parse-measure-auto-split
   (testing "events are split into measures by the time signature"
     (let* ((score (lilylink:build-score (lilylink:parse-music "\\relative c' { \\time 4/4 c1 c1 }")))

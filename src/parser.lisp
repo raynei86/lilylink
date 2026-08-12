@@ -11,7 +11,8 @@
   tokens
   (pos 0)
   (last-pitch nil)
-  (last-duration nil))
+  (last-duration nil)
+  (pending-ties nil))
 
 (defun parse-music (string)
   "Parse a LilyPond source string into a list of events."
@@ -71,12 +72,39 @@ duration (LOG . DOTS) or NIL, updating the parser's last-duration."
             (make-duration (car tok-dur) :dots (cdr tok-dur)))
       (or (parser-last-duration p) (make-duration 2))))
 
+;;; Ties: a tie (the ~ token) connects a note to the next note of the same
+;;; written pitch (step, alteration, and octave).  Pending ties are matched
+;;; against the pitches of the very next note/chord; any that do not match are
+;;; dropped, mirroring LilyPond.
+(defun pitch-key (pitch)
+  (list (pitch-step pitch) (pitch-alter pitch) (pitch-octave pitch)))
+
+(defun pitch-in-pending (p pitch)
+  (member (pitch-key pitch) (parser-pending-ties p) :test #'equal))
+
+(defun consume-tie (p)
+  (let ((tok (peek-token p)))
+    (when (and tok (eq (token-type tok) :tie))
+      (advance-token p)
+      t)))
+
+(defun finish-note (p pitch duration tie-stop-p)
+  "Build a NOTE, marking a pending-tie stop and consuming a trailing ~ as start."
+  (let ((note (make-instance 'note :pitch pitch :duration duration)))
+    (when tie-stop-p
+      (setf (note-tie-stop-p note) t))
+    (when (consume-tie p)
+      (setf (note-tie-start-p note) t)
+      (push (pitch-key pitch) (parser-pending-ties p)))
+    note))
+
 (defun parse-note-event (p ctx)
   (let* ((tok (advance-token p)))
     (destructuring-bind (step alter mark duration) (token-value tok)
-      (make-instance 'note
-                     :pitch (resolve-pitch p ctx step alter mark)
-                     :duration (effective-duration p duration)))))
+      (let* ((pitch (resolve-pitch p ctx step alter mark))
+             (tie-stop-p (pitch-in-pending p pitch)))
+        (setf (parser-pending-ties p) nil)
+        (finish-note p pitch (effective-duration p duration) tie-stop-p)))))
 
 (defun parse-rest-event (p ctx)
   (declare (ignore ctx))
@@ -92,12 +120,15 @@ duration (LOG . DOTS) or NIL, updating the parser's last-duration."
          (val (token-value tok))
          (duration (setf (parser-last-duration p)
                          (make-duration (duration-log-from-num (car val))
-                                        :dots (cdr val)))))
-    (make-instance 'note :pitch (parser-last-pitch p) :duration duration)))
+                                        :dots (cdr val))))
+         (pitch (parser-last-pitch p))
+         (tie-stop-p (pitch-in-pending p pitch)))
+    (setf (parser-pending-ties p) nil)
+    (finish-note p pitch duration tie-stop-p)))
 
 (defun parse-chord (p ctx)
   (advance-token p)  ; consume <
-  (let ((notes nil)
+  (let ((entries nil)
         (first-pitch nil))
     (loop
       (let ((tok (peek-token p)))
@@ -107,10 +138,14 @@ duration (LOG . DOTS) or NIL, updating the parser's last-duration."
         (let* ((tok (advance-token p))
                (pitch (destructuring-bind (step alter mark duration) (token-value tok)
                         (declare (ignore duration))
-                        (resolve-pitch p ctx step alter mark))))
+                        (resolve-pitch p ctx step alter mark)))
+               (tie-stop-p (pitch-in-pending p pitch))
+               (tie-start-p (consume-tie p)))
           (unless first-pitch (setf first-pitch pitch))
-          (push pitch notes))))
+          (push (list pitch tie-stop-p tie-start-p) entries))))
     (expect-token p :chord-close)
+    ;; The chord is fully matched: drop any pending ties it did not consume.
+    (setf (parser-pending-ties p) nil)
     ;; The reference for anything following the chord is its first note.
     (when (and ctx first-pitch)
       (setf (rel-ctx-ref ctx) first-pitch))
@@ -123,10 +158,21 @@ duration (LOG . DOTS) or NIL, updating the parser's last-duration."
                (duration (make-duration (duration-log-from-num (car val))
                                         :dots (cdr val))))
           (setf (parser-last-duration p) duration))))
-    (let ((duration (or (parser-last-duration p) (make-duration 2))))
-      (make-chord (mapcar (lambda (pt) (make-instance 'note :pitch pt :duration duration))
-                          (nreverse notes))
-                  duration))))
+    ;; A trailing ~ after `>` ties every note in the chord.
+    (let* ((chord-tie-p (consume-tie p))
+           (duration (or (parser-last-duration p) (make-duration 2)))
+           (notes (mapcar (lambda (entry)
+                            (destructuring-bind (pitch tie-stop-p tie-start-p) entry
+                              (let ((note (make-instance 'note :pitch pitch
+                                                          :duration duration)))
+                                (when tie-stop-p
+                                  (setf (note-tie-stop-p note) t))
+                                (when (or tie-start-p chord-tie-p)
+                                  (setf (note-tie-start-p note) t)
+                                  (push (pitch-key pitch) (parser-pending-ties p)))
+                                note)))
+                          (nreverse entries))))
+      (make-chord notes duration))))
 
 (defun parse-time-args (p)
   (let ((a (expect-token p :number))

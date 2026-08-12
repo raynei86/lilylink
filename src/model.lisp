@@ -11,7 +11,9 @@
 
 (defclass note ()
   ((pitch :initarg :pitch :accessor note-pitch)
-   (duration :initarg :duration :accessor note-duration)))
+   (duration :initarg :duration :accessor note-duration)
+   (tie-start :initarg :tie-start :initform nil :accessor note-tie-start-p)
+   (tie-stop :initarg :tie-stop :initform nil :accessor note-tie-stop-p)))
 
 (defclass rest-event ()
   ((duration :initarg :duration :accessor rest-duration)))

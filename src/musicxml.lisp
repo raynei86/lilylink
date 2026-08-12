@@ -36,7 +36,24 @@
   (write-string "<note>" s)
   (when chord-p (write-string "<chord/>" s))
   (emit-pitch s (note-pitch note))
-  (emit-duration s (note-duration note) divisions)
+  (format s "<duration>~D</duration>"
+          (duration-in-divisions (note-duration note) divisions))
+  ;; <tie> (the sound tie) precedes <type>/<dot>; <tied> (the notated tie)
+  ;; lives inside a trailing <notations> block.
+  (when (note-tie-stop-p note)
+    (write-string "<tie type=\"stop\"/>" s))
+  (when (note-tie-start-p note)
+    (write-string "<tie type=\"start\"/>" s))
+  (format s "<type>~A</type>"
+          (duration-type-name (duration-log (note-duration note))))
+  (emit-dots s (duration-dots (note-duration note)))
+  (when (or (note-tie-start-p note) (note-tie-stop-p note))
+    (write-string "<notations>" s)
+    (when (note-tie-stop-p note)
+      (write-string "<tied type=\"stop\"/>" s))
+    (when (note-tie-start-p note)
+      (write-string "<tied type=\"start\"/>" s))
+    (write-string "</notations>" s))
   (write-string "</note>" s))
 
 (defun emit-rest (s rest divisions)
