@@ -8,6 +8,7 @@
                 :components
                 ((:file "main")
                  (:file "model")
+                 (:file "duration")
                  (:file "lexer")
                  (:file "parser")
                  (:file "measure")

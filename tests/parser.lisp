@@ -101,6 +101,15 @@
     (ok (equal (tie-seq "\\relative c' { c4~ d4 c4 }")
                '("c4~" "d4" "c4")))))
 
+(deftest decompose-durations
+  (testing "decompose-units produces dyadic-dotted pieces"
+    (ok (equal (lilylink::decompose-units 6 4) '((2 . 1))))
+    (ok (equal (lilylink::decompose-units 14 4) '((1 . 2))))
+    (ok (equal (lilylink::decompose-units 5 4) '((2 . 0) (4 . 0)))))
+  (testing "measure-chunks fits values across measures"
+    (ok (equal (lilylink::measure-chunks 6 4 6) '(4 2)))
+    (ok (equal (lilylink::measure-chunks 4 6 6) '(4)))))
+
 (deftest parse-measure-auto-split
   (testing "events are split into measures by the time signature"
     (let* ((score (lilylink:build-score (lilylink:parse-music "\\relative c' { \\time 4/4 c1 c1 }")))

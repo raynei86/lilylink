@@ -66,6 +66,24 @@
       (ok (search "<duration>4</duration><tie type=\"start\"/><type>quarter</type>" xml))
       (ok (search "<notations><tied type=\"start\"/></notations>" xml)))))
 
+(deftest convert-auto-split
+  (testing "an overflowing note splits into tied notes across barlines"
+    (let ((xml (lilylink:convert-string "\\relative c' { \\time 3/4 c2 c2 }")))
+      (ok (search "<duration>2</duration><tie type=\"start\"/><type>quarter</type>" xml))
+      (ok (search "<measure number=\"2\"><note><pitch><step>C</step><octave>4</octave></pitch><duration>2</duration><tie type=\"stop\"/>" xml))))
+  (testing "a whole note in 2/4 splits into tied halves"
+    (let ((xml (lilylink:convert-string "\\relative c' { \\time 2/4 c1 }")))
+      (ok (search "<duration>8</duration><tie type=\"start\"/><type>half</type>" xml))
+      (ok (search "<tie type=\"stop\"/><type>half</type>" xml))))
+  (testing "chords split as tied chord pairs"
+    (let ((xml (lilylink:convert-string "\\relative c' { \\time 3/4 <c e>2 <c e>2 }")))
+      (ok (search "<chord/><pitch><step>E</step><octave>4</octave></pitch><duration>2</duration><tie type=\"start\"/>" xml))
+      (ok (search "<chord/><pitch><step>E</step><octave>4</octave></pitch><duration>2</duration><tie type=\"stop\"/>" xml))))
+  (testing "overflowing rests split without ties"
+    (let ((xml (lilylink:convert-string "\\relative c' { \\time 2/4 r1 }")))
+      (ok (search "<rest/><duration>8</duration><type>half</type>" xml))
+      (ok (not (search "<tie" xml))))))
+
 (deftest convert-file-roundtrip
   (testing "convert-file reads a .ly file"
     (let ((path (uiop:with-temporary-file (:pathname p :keep t :type "ly")
