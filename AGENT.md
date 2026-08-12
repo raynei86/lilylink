@@ -66,6 +66,20 @@ Guidelines:
 - Keep the subject under ~50 characters. Wrap the body at 72 columns.
 - Use the body to explain the *why* and *what*, not the mechanics.
 
+Message depth should scale with the size and impact of the diff:
+
+- Small, self-evident changes (a one-line fix, a docs tweak) need only the
+  subject, or a one-line body.
+- Large diffs (a new module, a multi-file refactor, a broad behavior change)
+  need a body that gives the reader the essentials without opening the diff:
+  - what changed and why (the motivation, not just the mechanics),
+  - the key design decisions or trade-offs made,
+  - what is affected (which files/modules, what behavior changed),
+  - anything deliberately left out or deferred.
+- A good rule of thumb: the body should let a reviewer understand the change
+  well enough to review it without reading the full diff, and a future reader
+  should be able to reconstruct the *intent* from the message alone.
+
 Example:
 
 ```
