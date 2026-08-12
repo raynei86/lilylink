@@ -30,9 +30,10 @@ convert-string / convert-file
 | --- | --- |
 | `src/main.lisp` | Package definition, public API, `lilylink-parse-error` condition |
 | `src/model.lisp` | CLOS classes for the intermediate representation |
+| `src/duration.lisp` | Duration arithmetic in division units (decomposition, measure chunks) |
 | `src/lexer.lisp` | Hand-written tokenizer; emits `token` structs |
-| `src/parser.lisp` | Recursive-descent parser; resolves `\relative` octaves |
-| `src/measure.lisp` | Groups events into measures, computes `divisions` and key fifths |
+| `src/parser.lisp` | Recursive-descent parser; resolves `\relative` octaves and ties |
+| `src/measure.lisp` | Lays events into measures, auto-splitting at barlines |
 | `src/musicxml.lisp` | Emits `score-partwise` XML with escaping |
 
 ### Model classes (`src/model.lisp`)
@@ -41,7 +42,8 @@ convert-string / convert-file
   `octave` (scientific; middle C = 4).
 - `duration` — `log` (log2 of the reciprocal; 0 = whole, 2 = quarter),
   `dots`.
-- `note` — a `pitch` + `duration`.
+- `note` — a `pitch` + `duration`, plus `tie-start`/`tie-stop` flags (a note
+  can both end and begin a tie).
 - `rest-event` — a `duration`.
 - `chord` — a list of `note`s sharing one `duration`.
 - `measure` — `number`, `events`, and an attribute snapshot (`attributes`,
@@ -123,6 +125,18 @@ no runtime dependency on LilyPond.
   next note that omits one (`c8 d` ⇒ both eighth).
 - Notes without an explicit duration default to a quarter note.
 
+### Ties
+
+- `~` after a note ties it to the next note of the same written pitch
+  (step + alteration + octave, so `cis` does not tie to `des`).
+- Tie chains work (`c4~ c4~ c4` ⇒ start / stop+start / stop), as do isolated
+  durations (`a'2~ 4` uses the "last explicit pitch").
+- Chord ties match by pitch: `<c e>4~ <c e>4` ties all matching notes, and
+  chord-internal ties (`<c~ e>4`) tie only the marked note. Non-matching ties
+  are dropped rather than carried forward (matching LilyPond).
+- Emitted as `<tie>` (sound) between `<duration>` and `<type>`, and `<tied>`
+  (notation) inside `<notations>`.
+
 ### Rests
 
 - `r` (with optional duration) produces a normal MusicXML rest.
@@ -139,6 +153,10 @@ no runtime dependency on LilyPond.
 - `|` closes the current measure (empty measures are not emitted).
 - Measures are also split automatically when the accumulated duration reaches
   the time signature's length.
+- A note, rest, or chord that would overflow a measure is split at the
+  barline into dyadic-dotted pieces: notes and chords become tied pieces
+  (which compose with explicit source `~` ties), rests become separate
+  untied rests. See `src/duration.lisp`.
 - Measure numbers are sequential from 1; a barline check that does not land on
   a measure boundary is not validated.
 
@@ -161,7 +179,9 @@ no runtime dependency on LilyPond.
 - Notes: `<pitch>` (`<step>`, optional `<alter>`, `<octave>`), `<duration>`,
   `<type>`, optional `<dot/>`. Rests: `<note><rest/>…`. Chords: `<chord/>`.
 - `divisions` is computed globally as `2 ^ max(log + dots)` over all
-  durations, so every `<duration>` is an integer.
+  durations (raised as needed so every measure length is also integral in
+  division units), so every `<duration>` and every measure boundary is an
+  integer.
 - All emitted element and attribute names are fixed literals; no user-supplied
   text reaches the XML, so no escaping is required.
 
@@ -181,7 +201,6 @@ chapters:
 
 ### Rhythms (ch. 2)
 
-- Ties `~` (the `~` character errors in the lexer).
 - Tuplets `\tuplet`.
 - Grace notes `\grace`, `\acciaccatura`, `\appoggiatura`.
 - `\partial` (pickup measures), `\longa`, `\breve`, `\maxima`.
@@ -239,9 +258,6 @@ chapters:
 
 These are places where behavior is deliberately lenient or lossy:
 
-- **Barline overflow**: a note whose duration crosses a measure boundary is
-  kept whole in the earlier measure (no automatic tie-splitting), so that
-  measure's content can exceed the time signature. This is not validated.
 - **Incomplete measures** are not padded and no warning is issued.
 - **Chord duration attachment**: a `<c e g> 4` (space before the `4`) is
   treated as the chord's duration, matching `<c e g>4`, rather than as an
@@ -256,10 +272,12 @@ These are places where behavior is deliberately lenient or lossy:
 
 - Rove suite under `tests/` (run with `(asdf:test-system :lilylink)`),
   covering: tokenization (notes, accidentals, octave marks, rests, chords,
-  comments, commands), relative-octave resolution (scale wrap, interval
-  minimization, chords, nested blocks, no-start-pitch), measure auto-splitting,
-  error signaling, and MusicXML emission (structure, attributes, dotted notes,
-  rests, chords, `\score` wrappers, file round-trip).
+  comments, commands, ties), relative-octave resolution (scale wrap, interval
+  minimization, chords, nested blocks, no-start-pitch), explicit ties (chains,
+  isolated durations, chord and chord-internal ties, unmatched-tie dropping),
+  duration decomposition, barline auto-splitting (notes, chords, rests), error
+  signaling, and MusicXML emission (structure, attributes, dotted notes, rests,
+  chords, tie markers, `\score` wrappers, file round-trip).
 - Relative-octave behavior was cross-validated against the real `lilypond`
   binary (via `\displayMusic` and MIDI output), including the counterintuitive
   chord-octave-mark results and the "nested `\relative` leaves the enclosing
@@ -267,11 +285,9 @@ These are places where behavior is deliberately lenient or lossy:
 
 ## Roadmap (suggested order)
 
-1. Ties `~` and slurs `( )` — enables automatic barline tie-splitting and
-   fixes the overflow limitation.
-2. Articulations, ornaments, and dynamics.
-3. Polyphony / voices (`<< >>`, `\\`) and `\voiceOne` … `\voiceFour`.
-4. Multiple staves and staff groups.
-5. `\chordmode` and lyrics.
+1. Slurs `( )`, articulations, ornaments, and dynamics.
+2. Polyphony / voices (`<< >>`, `\\`) and `\voiceOne` … `\voiceFour`.
+3. Multiple staves and staff groups.
+4. `\chordmode` and lyrics.
 6. `\transpose` and quarter-tone accidentals.
 7. Header metadata into MusicXML `<work>` / `<creator>`.
