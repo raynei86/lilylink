@@ -48,6 +48,21 @@
    (text :initarg :text :initform nil :accessor mark-text)
    (attrs :initarg :attrs :initform nil :accessor mark-attrs)))
 
+;;; A slur or phrasing slur spanner attached to a note: ACTION is :start or
+;;; :stop; NUMBER identifies the (possibly nested) slur; PHRASE-P marks a
+;;; phrasing slur, which MusicXML has no element for and so is emitted as a
+;;; <slur> with an offset number.
+(defclass slur ()
+  ((number :initarg :number :accessor slur-number)
+   (action :initarg :action :accessor slur-action)
+   (phrase-p :initarg :phrase-p :initform nil :accessor slur-phrase-p)))
+
+;;; A hairpin (crescendo/diminuendo) spanner.  On a start note TYPE is
+;;; :crescendo or :diminuendo; on a stop note it is :stop.
+(defclass wedge ()
+  ((number :initarg :number :accessor wedge-number)
+   (type :initarg :type :accessor wedge-type)))
+
 (defclass measure ()
   ((number :initarg :number :accessor measure-number)
    (events :initform nil :accessor measure-events)
@@ -86,6 +101,17 @@ moved into the mark's text slot."
     (let ((text (getf props :text)))
       (remf props :text)
       (make-instance 'mark :kind kind :tag tag :text text :attrs props))))
+
+(defun make-slur (number action &optional phrase-p)
+  (make-instance 'slur :number number :action action :phrase-p phrase-p))
+
+(defun make-wedge (number type)
+  (make-instance 'wedge :number number :type type))
+
+(defun attachment-stop-p (attachment)
+  "Whether an attachment terminates a spanner (goes on the last split piece)."
+  (or (and (typep attachment 'slur) (eq (slur-action attachment) :stop))
+      (and (typep attachment 'wedge) (eq (wedge-type attachment) :stop))))
 
 ;;; Attached marks can be added to notes, rests, and chords uniformly.
 (defgeneric event-attachments (event))

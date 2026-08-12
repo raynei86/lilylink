@@ -12,7 +12,9 @@
   (pos 0)
   (last-pitch nil)
   (last-duration nil)
-  (pending-ties nil))
+  (pending-ties nil)
+  (pending-slurs nil)
+  (pending-wedge nil))
 
 (defun parse-music (string)
   "Parse a LilyPond source string into a list of events."
@@ -109,6 +111,8 @@ duration (LOG . DOTS) or NIL, updating the parser's last-duration."
     (let* ((cmd (token-value tok))
            (spec (lookup-mark cmd)))
       (advance-token p)
+      (when (member (car spec) '(:dynamic :other-dynamics))
+        (close-pending-wedge p event))
       (push (make-mark spec) (event-attachments event)))))
 
 (defun parse-post-events (p event)
@@ -125,15 +129,61 @@ duration (LOG . DOTS) or NIL, updating the parser's last-duration."
         (:command
          (let* ((cmd (token-value tok))
                 (spec (lookup-mark cmd)))
-           (if spec
-               (progn (advance-token p)
-                      (push (make-mark spec) (event-attachments event)))
-               (return))))
+           (cond (spec
+                  (advance-token p)
+                  ;; An absolute dynamic terminates an open hairpin.
+                  (when (member (car spec) '(:dynamic :other-dynamics))
+                    (close-pending-wedge p event))
+                  (push (make-mark spec) (event-attachments event)))
+                 ((member cmd '(:cr :decr))
+                  (advance-token p)
+                  (close-pending-wedge p event)
+                  (let ((type (if (eq cmd :cr) :crescendo :diminuendo)))
+                    (setf (parser-pending-wedge p) (cons type 1))
+                    (push (make-wedge 1 type) (event-attachments event))))
+                 ((member cmd '(:endcr :enddecr))
+                  (advance-token p)
+                  (close-pending-wedge p event))
+                 (t (return)))))
         ((:attach-dash :attach-up :attach-down)
          (advance-token p)
          (parse-attached-mark p event))
+        (:slur-open
+         (advance-token p)
+         (let ((number (1+ (length (parser-pending-slurs p)))))
+           (push (cons nil number) (parser-pending-slurs p))
+           (push (make-slur number :start) (event-attachments event))))
+        (:slur-close
+         (advance-token p)
+         (let ((spec (pop (parser-pending-slurs p))))
+           (when spec
+             (push (make-slur (cdr spec) :stop) (event-attachments event)))))
+        (:phrase-open
+         (advance-token p)
+         (let ((number (1+ (length (parser-pending-slurs p)))))
+           (push (cons t number) (parser-pending-slurs p))
+           (push (make-slur number :start t) (event-attachments event))))
+        (:phrase-close
+         (advance-token p)
+         (let ((spec (pop (parser-pending-slurs p))))
+           (when spec
+             (push (make-slur (cdr spec) :stop t) (event-attachments event)))))
+        (:wedge-start
+         (advance-token p)
+         (close-pending-wedge p event)
+         (setf (parser-pending-wedge p) (cons (token-value tok) 1))
+         (push (make-wedge 1 (token-value tok)) (event-attachments event)))
+        (:wedge-stop
+         (advance-token p)
+         (close-pending-wedge p event))
         (t (return)))))
   event)
+
+(defun close-pending-wedge (p event)
+  "Close the open hairpin, if any, marking EVENT as its stop."
+  (when-let ((wedge (parser-pending-wedge p)))
+    (push (make-wedge (cdr wedge) :stop) (event-attachments event))
+    (setf (parser-pending-wedge p) nil)))
 
 (defun parse-note-event (p ctx)
   (let* ((tok (advance-token p)))

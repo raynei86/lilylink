@@ -115,6 +115,24 @@
       (ok (search "<inverted-mordent/>" xml))
       (ok (search "<mordent/>" xml)))))
 
+(deftest convert-slurs-and-hairpins
+  (testing "slurs emit as notations"
+    (let ((xml (lilylink:convert-string "\\relative c' { c4( d e) }")))
+      (ok (search "<slur type=\"start\" number=\"1\"/>" xml))
+      (ok (search "<slur type=\"stop\" number=\"1\"/>" xml))))
+  (testing "phrasing slurs use an offset number"
+    (let ((xml (lilylink:convert-string "\\relative c' { c4\\( d e\\) }")))
+      (ok (search "<slur type=\"start\" number=\"101\"/>" xml))
+      (ok (search "<slur type=\"stop\" number=\"101\"/>" xml))))
+  (testing "hairpins emit as directions"
+    (let ((xml (lilylink:convert-string "\\relative c' { c4\\< d\\! }")))
+      (ok (search "<direction placement=\"above\"><direction-type><wedge type=\"crescendo\" number=\"1\"/></direction-type></direction>" xml))
+      (ok (search "<wedge type=\"stop\" number=\"1\"/>" xml))))
+  (testing "a dynamic closes an open hairpin"
+    (let ((xml (lilylink:convert-string "\\relative c' { c4\\< d\\f }")))
+      (ok (search "<wedge type=\"stop\"" xml))
+      (ok (search "<dynamics><f/></dynamics>" xml)))))
+
 (deftest convert-file-roundtrip
   (testing "convert-file reads a .ly file"
     (let ((path (uiop:with-temporary-file (:pathname p :keep t :type "ly")

@@ -92,8 +92,10 @@ measure length integral in division units (i.e. 4*2^log divisible by each
            (setf accumulated 0))
 
          ;; Place a run of dyadic-dotted pieces of one pitch as tied notes.
+         ;; FIRST-ATTS go on the first piece, LAST-ATTS (spanner stops) on the
+         ;; last.
          (place-note-pieces (pitch pieces first-p last-p src-start src-stop
-                                  &optional attachments)
+                                  &optional first-atts last-atts)
            (let ((np (length pieces)))
              (loop for piece in pieces
                    for j from 0
@@ -106,9 +108,10 @@ measure length integral in division units (i.e. 4*2^log divisible by each
                             (setf (note-tie-stop-p note) t))
                           (when (or has-next (and last-p (= (1+ j) np) src-start))
                             (setf (note-tie-start-p note) t))
-                          ;; Attached marks belong on the first split piece.
-                          (when (and first-p (zerop j) attachments)
-                            (setf (event-attachments note) attachments))
+                          (when (and first-p (zerop j) first-atts)
+                            (setf (event-attachments note) first-atts))
+                          (when (and last-p (= (1+ j) np) last-atts)
+                            (setf (event-attachments note) last-atts))
                           (push-event note dur))))))
 
          (place-note (note)
@@ -120,6 +123,7 @@ measure length integral in division units (i.e. 4*2^log divisible by each
                  (let ((pitch (note-pitch note))
                        (src-start (note-tie-start-p note))
                        (src-stop (note-tie-stop-p note))
+                       (atts (event-attachments note))
                        (nchunks (length chunks)))
                    (loop for chunk in chunks
                          for i from 0
@@ -128,7 +132,8 @@ measure length integral in division units (i.e. 4*2^log divisible by each
                                                (zerop i)
                                                (= (1+ i) nchunks)
                                                src-start src-stop
-                                               (event-attachments note))
+                                               (remove-if #'attachment-stop-p atts)
+                                               (remove-if-not #'attachment-stop-p atts))
                             (unless (= (1+ i) nchunks)
                               (next-measure)))))))
 
@@ -154,6 +159,7 @@ measure length integral in division units (i.e. 4*2^log divisible by each
              (if (null (rest chunks))
                  (push-event chord (chord-duration chord))
                  (let ((notes (chord-notes chord))
+                       (atts (event-attachments chord))
                        (nchunks (length chunks)))
                    (loop for chunk in chunks
                          for i from 0
@@ -180,10 +186,16 @@ measure length integral in division units (i.e. 4*2^log divisible by each
                                                               sub))
                                                           notes)))
                                            (let ((sub-chord (make-chord sub-notes dur)))
-                                             ;; Attached marks go on the first split chord.
-                                             (when (and (zerop i) (zerop j))
-                                               (setf (event-attachments sub-chord)
-                                                     (event-attachments chord)))
+                                             ;; Marks go on the first split chord; spanner
+                                             ;; stops on the last.
+                                             (cond
+                                               ((and (zerop i) (zerop j))
+                                                (setf (event-attachments sub-chord)
+                                                      (remove-if #'attachment-stop-p atts)))
+                                               ((and (= (1+ i) nchunks)
+                                                     (= (1+ j) (length pieces)))
+                                                (setf (event-attachments sub-chord)
+                                                      (remove-if-not #'attachment-stop-p atts))))
                                              (push-event sub-chord dur)))))
                               (unless (= (1+ i) nchunks)
                                 (next-measure)))))))))

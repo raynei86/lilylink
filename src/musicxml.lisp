@@ -44,12 +44,20 @@
     (emit-mark s mark))
   (write-string (format nil "</~A>" container) s))
 
-;;; Write the children of <notations> (tied plus mark containers) for EVENT,
-;;; plus any EXTRA attachments (e.g. chord-level marks merged into the first
-;;; note).  Returns whether anything was written.
+;;; Write the children of <notations> (slur, tied, then mark containers) for
+;;; EVENT, plus any EXTRA attachments (e.g. chord-level marks merged into the
+;;; first note).  Returns whether anything was written.
 (defun emit-notations-content (s event &optional extra)
   (let ((written nil)
         (marks (append extra (event-attachments event))))
+    (dolist (attachment marks)
+      (when (typep attachment 'slur)
+        (let ((number (if (slur-phrase-p attachment)
+                          (+ 100 (slur-number attachment))
+                          (slur-number attachment))))
+          (format s "<slur type=\"~A\" number=\"~D\"/>"
+                  (string-downcase (slur-action attachment)) number))
+        (setf written t)))
     (when (typep event 'note)
       (when (note-tie-stop-p event)
         (write-string "<tied type=\"stop\"/>" s)
@@ -60,14 +68,15 @@
     (dolist (container '("ornaments" "technical" "articulations" "dynamics"))
       (let ((group (remove-if-not
                     (lambda (mark)
-                      (string= (cdr (assoc (mark-kind mark) +mark-container+))
-                               container))
+                      (and (typep mark 'mark)
+                           (string= (cdr (assoc (mark-kind mark) +mark-container+))
+                                    container)))
                     marks)))
         (when group
           (emit-mark-group s container group)
           (setf written t))))
     (dolist (mark marks)
-      (when (eq (mark-kind mark) :fermata)
+      (when (and (typep mark 'mark) (eq (mark-kind mark) :fermata))
         (write-string "<fermata" s)
         (emit-mark-attrs s mark)
         (write-string "/>" s)
@@ -131,10 +140,25 @@
 
 (defun emit-event (s ev divisions)
   (typecase ev
-    (note (emit-note s ev divisions))
-    (rest-event (emit-rest s ev divisions))
-    (chord (emit-chord s ev divisions))
+    (note
+     (emit-note s ev divisions)
+     (emit-wedges s ev))
+    (rest-event
+     (emit-rest s ev divisions)
+     (emit-wedges s ev))
+    (chord
+     (emit-chord s ev divisions)
+     (emit-wedges s ev))
     (t (error "Cannot emit event ~S" ev))))
+
+;;; Hairpins are <direction> elements, siblings of <note>, so they are emitted
+;;; after the note (or chord) they attach to.
+(defun emit-wedges (s event)
+  (dolist (attachment (event-attachments event))
+    (when (typep attachment 'wedge)
+      (format s "<direction placement=\"above\"><direction-type><wedge type=\"~A\" number=\"~D\"/></direction-type></direction>"
+              (string-downcase (wedge-type attachment))
+              (wedge-number attachment)))))
 
 (defun clef-sign-line (clef)
   (let ((entry (assoc clef +clef-signs+)))

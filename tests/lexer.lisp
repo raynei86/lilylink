@@ -59,4 +59,9 @@
            (marks (loop for tok in tokens
                         when (eq (lilylink::token-type tok) :articulation)
                         collect (lilylink::token-value tok))))
-      (ok (equal marks '(:staccato :accent :staccatissimo))))))
+      (ok (equal marks '(:staccato :accent :staccatissimo))))
+    (let ((tokens (lilylink:tokenize "c4( d\\) e\\< f\\> g\\! a\\( b)")))
+      (ok (equal (mapcar #'lilylink::token-type tokens)
+                 '(:pitch :slur-open :pitch :phrase-close :pitch :wedge-start
+                   :pitch :wedge-start :pitch :wedge-stop :pitch :phrase-open
+                   :pitch :slur-close))))))

@@ -110,6 +110,35 @@
 (defun event-marks (e)
   (mapcar #'lilylink::mark-tag (lilylink::event-attachments e)))
 
+(defun attach-string (a)
+  (cond ((typep a 'lilylink::slur)
+         (format nil "~A~A~D"
+                 (if (lilylink::slur-phrase-p a) "p" "s")
+                 (string-downcase (lilylink::slur-action a))
+                 (lilylink::slur-number a)))
+        ((typep a 'lilylink::wedge)
+         (format nil "w~A" (string-downcase (lilylink::wedge-type a))))
+        (t (lilylink::mark-tag a))))
+
+(defun attach-seq (e)
+  (mapcar #'attach-string (lilylink::event-attachments e)))
+
+(deftest parse-spanners
+  (testing "slur start and stop attach to notes"
+    (let ((events (lilylink:parse-music "\\relative c' { c4( d e) }")))
+      (ok (equal (mapcar #'attach-seq events)
+                 '(("sstart1") nil ("sstop1"))))))
+  (testing "nested and phrasing slurs get distinct numbers"
+    (let ((events (lilylink:parse-music "\\relative c' { c4\\( d4( e4) f4\\) }")))
+      (ok (equal (mapcar #'attach-seq events)
+                 '(("pstart1") ("sstart2") ("sstop2") ("pstop1"))))))
+  (testing "hairpins start and stop"
+    (let ((events (lilylink:parse-music "\\relative c' { c4\\< d\\! }")))
+      (ok (equal (mapcar #'attach-seq events) '(("wcrescendo") ("wstop"))))))
+  (testing "an absolute dynamic closes an open hairpin"
+    (let ((events (lilylink:parse-music "\\relative c' { c4\\< d\\f }")))
+      (ok (equal (mapcar #'attach-seq events) '(("wcrescendo") ("f" "wstop")))))))
+
 (deftest parse-marks
   (testing "articulation and dynamic commands attach marks"
     (let* ((events (lilylink:parse-music "\\relative c' { c4\\staccato d\\mf }"))
