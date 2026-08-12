@@ -2,6 +2,11 @@
 
 Still in heavy development. Readme is a stub.
 
+** Documentation
+
++ [[./docs/IMPLEMENTATION.md][Implementation status]] — what is and is not supported by the converter.
++ [[./docs/notation.pdf][LilyPond Notation Reference]] — the upstream specification.
+
 ** Author
 
 + Lihui Zhang (zlihui486@gmail.com)
