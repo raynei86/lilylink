@@ -1,0 +1,26 @@
+#!/bin/sh
+
+# commit-msg hook for lilylink
+#
+# Auto-appends the LLM co-author trailer to commit messages so every commit
+# is marked with LLM participation. Idempotent: if the trailer is already
+# present (in the whole message, trailers or body), the message is untouched.
+
+FILE="$1"
+COAUTHOR="Co-authored-by: Deepseek V4 <info@deepseek.ai>"
+
+# Exit early if the trailer already exists anywhere in the message.
+if grep -qF "Co-authored-by: Deepseek V4" "$FILE"; then
+    exit 0
+fi
+
+# Trap interrupts and restore the original message if we are interrupted.
+TMP="$FILE.msg.$$"
+trap 'rm -f "$TMP"' EXIT HUP INT TERM
+
+# Strip trailing blank lines, then append a blank line and the trailer so it
+# is a proper Git trailer (requires a blank line after the last paragraph).
+{
+    sed -e :a -e '/[^[:space:]]/!{s/.*//;N;ba;}' -e '/^$/d' "$FILE"
+    printf '\n%s\n' "$COAUTHOR"
+} > "$TMP" && mv "$TMP" "$FILE"

@@ -1,0 +1,15 @@
+* Lilylink
+
+Still in heavy development. Readme is a stub.
+
+** Author
+
++ Lihui Zhang (zlihui486@gmail.com)
+
+** Copyright
+
+Copyright (c) 2026 Lihui Zhang (zlihui486@gmail.com)
+
+** License
+
+Licensed under the GPLv3 License.
