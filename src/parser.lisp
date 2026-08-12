@@ -108,6 +108,9 @@ duration (LOG . DOTS) or NIL, updating the parser's last-duration."
 
 (defun parse-rest-event (p ctx)
   (declare (ignore ctx))
+  ;; A rest (or spacer) breaks any pending tie: the next note-head cannot
+  ;; connect to a tie across a rest, so drop it (mirroring LilyPond).
+  (setf (parser-pending-ties p) nil)
   (let* ((tok (advance-token p))
          (duration (effective-duration p (token-value tok))))
     (make-rest duration)))

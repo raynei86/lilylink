@@ -8,12 +8,16 @@
          :line line :col col))
 
 (defun duration-log-from-num (num)
-  "Log2 of NUM, which must be a positive power of two."
+  "Log2 of NUM, which must be a positive power of two no longer than
++MAX-DURATION-LOG+ (i.e. at most a 1024th note)."
   (unless (and (integerp num) (plusp num))
     (lilylink-error-at 0 0 "Invalid duration number ~S" num))
   (let ((log (integer-length (1- num))))
     (unless (= num (expt 2 log))
       (lilylink-error-at 0 0 "Invalid duration number ~S" num))
+    (when (> log +max-duration-log+)
+      (lilylink-error-at 0 0 "Unsupported duration ~S (longest supported note is 2^~D)"
+                         num +max-duration-log+))
     log))
 
 (defun tokenize (string)

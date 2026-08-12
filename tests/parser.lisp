@@ -24,7 +24,7 @@
   (testing "ascending scale stays in octave, wraps correctly"
     (ok (equal (pitch-sequence "\\relative c' { c d e f g a b c | g c | c, g'' }")
                '("c4" "d4" "e4" "f4" "g4" "a4" "b4" "c5" "|" "g4" "c5" "|" "c4" "g5"))))
-  (testing "intervals are minimized (fifth up beats fourth down on ties)"
+  (testing "the closer interval wins (a fourth below beats a fifth above)"
     (ok (equal (pitch-sequence "\\relative c' { c g }") '("c4" "g3"))))
   (testing "accidentals do not affect octave placement"
     (ok (equal (pitch-sequence "\\relative c'' { c2 ges }") '("c5" "g4")))))
@@ -99,7 +99,13 @@
                '("[c4~ e4]" "[c4- e4]"))))
   (testing "unmatched ties are dropped without leaking"
     (ok (equal (tie-seq "\\relative c' { c4~ d4 c4 }")
-               '("c4~" "d4" "c4")))))
+               '("c4~" "d4" "c4"))))
+  (testing "a rest breaks a pending tie"
+    (ok (equal (tie-seq "\\relative c' { c4~ r4 c4 }")
+               '("c4~" "r" "c4"))))
+  (testing "a spacer rest breaks a pending tie"
+    (ok (equal (tie-seq "\\relative c' { c4~ s4 c4 }")
+               '("c4~" "r" "c4")))))
 
 (deftest decompose-durations
   (testing "decompose-units produces dyadic-dotted pieces"
@@ -122,4 +128,7 @@
           (lilylink:lilylink-parse-error () t))))
   (testing "isolated duration without a preceding note is an error"
     (ok (handler-case (progn (lilylink:parse-music "{ 4 }") nil)
+          (lilylink:lilylink-parse-error () t))))
+  (testing "durations beyond the supported maximum are rejected cleanly"
+    (ok (handler-case (progn (lilylink:parse-music "{ c2048 }") nil)
           (lilylink:lilylink-parse-error () t)))))

@@ -4,12 +4,14 @@
 
 (defparameter +duration-type-names+
   #("whole" "half" "quarter" "eighth" "16th" "32nd" "64th"
-    "128th" "256th" "512th" "1024th"))
+    "128th" "256th" "512th" "1024th" "2048th" "4096th"))
 
 (defparameter +clef-signs+
   '((:treble "G" 2) (:alto "C" 3) (:tenor "C" 4) (:bass "F" 4)))
 
 (defun duration-type-name (log)
+  (unless (< log (length +duration-type-names+))
+    (error "Cannot emit a note of duration log2 ~D" log))
   (aref +duration-type-names+ log))
 
 (defun duration-in-divisions (duration divisions)

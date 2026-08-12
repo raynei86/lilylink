@@ -81,6 +81,9 @@
 
 (defparameter +pitch-step-letters+ "cdefgab")
 
+(defparameter +max-duration-log+ 10
+  "Largest supported duration log2 (whole=0 .. 1024th=10).")
+
 (defun pitch-step-letter (step)
   (aref +pitch-step-letters+ step))
 

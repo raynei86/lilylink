@@ -118,7 +118,7 @@ no runtime dependency on LilyPond.
 ### Durations
 
 - Duration numbers that are powers of two: `1 2 4 8 16 32 64 128` (also
-  `256`…`1024`).
+  `256`…`1024`; anything longer is rejected with a parse error).
 - Augmentation dots: `c4.`, `c8..`.
 - Isolated duration events reuse the preceding note's pitch
   (`c4 8` = quarter then eighth, both `c`); durations carry forward to the
@@ -133,7 +133,8 @@ no runtime dependency on LilyPond.
   durations (`a'2~ 4` uses the "last explicit pitch").
 - Chord ties match by pitch: `<c e>4~ <c e>4` ties all matching notes, and
   chord-internal ties (`<c~ e>4`) tie only the marked note. Non-matching ties
-  are dropped rather than carried forward (matching LilyPond).
+  are dropped rather than carried forward (matching LilyPond), and a rest (or
+  spacer `s`) breaks any pending tie.
 - Emitted as `<tie>` (sound) between `<duration>` and `<type>`, and `<tied>`
   (notation) inside `<notations>`.
 
