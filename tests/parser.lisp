@@ -118,6 +118,14 @@
                  (lilylink::slur-number a)))
         ((typep a 'lilylink::wedge)
          (format nil "w~A" (string-downcase (lilylink::wedge-type a))))
+        ((typep a 'lilylink::glissando)
+         (format nil "g~A" (string-downcase (lilylink::glissando-action a))))
+        ((typep a 'lilylink::trill)
+         (format nil "t~A" (string-downcase (lilylink::trill-action a))))
+        ((typep a 'lilylink::arpeggio)
+         (if (lilylink::arpeggio-direction a)
+             (format nil "arp~A" (string-downcase (lilylink::arpeggio-direction a)))
+             "arp"))
         (t (lilylink::mark-tag a))))
 
 (defun attach-seq (e)
@@ -138,6 +146,23 @@
   (testing "an absolute dynamic closes an open hairpin"
     (let ((events (lilylink:parse-music "\\relative c' { c4\\< d\\f }")))
       (ok (equal (mapcar #'attach-seq events) '(("wcrescendo") ("f" "wstop")))))))
+
+(deftest parse-lines
+  (testing "glissando connects to the next note"
+    (let ((events (lilylink:parse-music "\\relative c' { g2\\glissando g'4 }")))
+      (ok (equal (mapcar #'attach-seq events) '(("gstart") ("gstop"))))))
+  (testing "trill spans start and stop"
+    (let ((events (lilylink:parse-music "\\relative c' { d1\\startTrillSpan d1 c2\\stopTrillSpan }")))
+      (ok (equal (mapcar #'attach-seq events) '(("tstart") nil ("tstop"))))))
+  (testing "arpeggio attaches to a chord"
+    (let ((events (lilylink:parse-music "\\relative c' { <c e g>1\\arpeggio }")))
+      (ok (equal (attach-seq (first events)) '("arp")))))
+  (testing "breathe attaches a breath mark to the preceding note"
+    (let ((events (lilylink:parse-music "\\relative c' { c2 \\breathe d4 }")))
+      (ok (equal (mapcar #'attach-seq events) '(("breath-mark") nil)))))
+  (testing "bendAfter maps sign to doit/falloff"
+    (let ((events (lilylink:parse-music "\\relative c' { c2\\bendAfter 4 d2\\bendAfter -4 }")))
+      (ok (equal (mapcar #'attach-seq events) '(("doit") ("falloff")))))))
 
 (deftest parse-marks
   (testing "articulation and dynamic commands attach marks"

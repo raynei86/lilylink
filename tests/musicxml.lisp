@@ -133,6 +133,26 @@
       (ok (search "<wedge type=\"stop\"" xml))
       (ok (search "<dynamics><f/></dynamics>" xml)))))
 
+(deftest convert-lines
+  (testing "glissando emits start and stop"
+    (let ((xml (lilylink:convert-string "\\relative c' { g2\\glissando g'4 }")))
+      (ok (search "<glissando type=\"start\" number=\"1\"/>" xml))
+      (ok (search "<glissando type=\"stop\" number=\"1\"/>" xml))))
+  (testing "trill spans emit trill-mark and wavy-line"
+    (let ((xml (lilylink:convert-string "\\relative c' { d1\\startTrillSpan c2\\stopTrillSpan }")))
+      (ok (search "<trill-mark/><wavy-line type=\"start\" number=\"1\"/>" xml))
+      (ok (search "<wavy-line type=\"stop\" number=\"1\"/>" xml))))
+  (testing "arpeggio emits on a chord"
+    (let ((xml (lilylink:convert-string "\\relative c' { <c e g>1\\arpeggio }")))
+      (ok (search "<arpeggiate/>" xml))))
+  (testing "breathe emits a breath mark"
+    (let ((xml (lilylink:convert-string "\\relative c' { c2 \\breathe d4 }")))
+      (ok (search "<articulations><breath-mark/></articulations>" xml))))
+  (testing "bends emit doit and falloff"
+    (let ((xml (lilylink:convert-string "\\relative c' { c2\\bendAfter 4 d2\\bendAfter -4 }")))
+      (ok (search "<doit/>" xml))
+      (ok (search "<falloff/>" xml)))))
+
 (deftest convert-file-roundtrip
   (testing "convert-file reads a .ly file"
     (let ((path (uiop:with-temporary-file (:pathname p :keep t :type "ly")

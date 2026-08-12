@@ -63,6 +63,20 @@
   ((number :initarg :number :accessor wedge-number)
    (type :initarg :type :accessor wedge-type)))
 
+;;; A glissando spanner from a note to the immediately following note.
+(defclass glissando ()
+  ((number :initarg :number :accessor glissando-number)
+   (action :initarg :action :accessor glissando-action)))  ; :start :stop
+
+;;; A trill span (\startTrillSpan ... \stopTrillSpan).
+(defclass trill ()
+  ((number :initarg :number :accessor trill-number)
+   (action :initarg :action :accessor trill-action)))  ; :start :stop
+
+;;; An arpeggio on a chord; DIRECTION is NIL, :up, or :down.
+(defclass arpeggio ()
+  ((direction :initarg :direction :initform nil :accessor arpeggio-direction)))
+
 (defclass measure ()
   ((number :initarg :number :accessor measure-number)
    (events :initform nil :accessor measure-events)
@@ -108,10 +122,21 @@ moved into the mark's text slot."
 (defun make-wedge (number type)
   (make-instance 'wedge :number number :type type))
 
+(defun make-glissando (number action)
+  (make-instance 'glissando :number number :action action))
+
+(defun make-trill (number action)
+  (make-instance 'trill :number number :action action))
+
+(defun make-arpeggio (&optional (direction nil))
+  (make-instance 'arpeggio :direction direction))
+
 (defun attachment-stop-p (attachment)
   "Whether an attachment terminates a spanner (goes on the last split piece)."
   (or (and (typep attachment 'slur) (eq (slur-action attachment) :stop))
-      (and (typep attachment 'wedge) (eq (wedge-type attachment) :stop))))
+      (and (typep attachment 'wedge) (eq (wedge-type attachment) :stop))
+      (and (typep attachment 'glissando) (eq (glissando-action attachment) :stop))
+      (and (typep attachment 'trill) (eq (trill-action attachment) :stop))))
 
 ;;; Attached marks can be added to notes, rests, and chords uniformly.
 (defgeneric event-attachments (event))

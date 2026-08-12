@@ -65,6 +65,22 @@
       (when (note-tie-start-p event)
         (write-string "<tied type=\"start\"/>" s)
         (setf written t)))
+    (dolist (attachment marks)
+      (when (typep attachment 'glissando)
+        (format s "<glissando type=\"~A\" number=\"~D\"/>"
+                (string-downcase (glissando-action attachment))
+                (glissando-number attachment))
+        (setf written t)))
+    (dolist (attachment marks)
+      (when (typep attachment 'trill)
+        (write-string "<ornaments>" s)
+        (when (eq (trill-action attachment) :start)
+          (write-string "<trill-mark/>" s))
+        (format s "<wavy-line type=\"~A\" number=\"~D\"/>" 
+                (string-downcase (trill-action attachment))
+                (trill-number attachment))
+        (write-string "</ornaments>" s)
+        (setf written t)))
     (dolist (container '("ornaments" "technical" "articulations" "dynamics"))
       (let ((group (remove-if-not
                     (lambda (mark)
@@ -80,6 +96,13 @@
         (write-string "<fermata" s)
         (emit-mark-attrs s mark)
         (write-string "/>" s)
+        (setf written t)))
+    (dolist (attachment marks)
+      (when (typep attachment 'arpeggio)
+        (if (arpeggio-direction attachment)
+            (format s "<arpeggiate direction=\"~A\"/>"
+                    (string-downcase (arpeggio-direction attachment)))
+            (write-string "<arpeggiate/>" s))
         (setf written t)))
     written))
 
