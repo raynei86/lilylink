@@ -153,6 +153,19 @@
       (ok (search "<doit/>" xml))
       (ok (search "<falloff/>" xml)))))
 
+(deftest convert-voices
+  (testing "multiple voices emit voice numbers and backup"
+    (let ((xml (lilylink:convert-string "\\relative c' { << { c4 d e f } \\\\ { g2 a2 } >> }")))
+      (ok (search "<voice>1</voice>" xml))
+      (ok (search "<voice>2</voice>" xml))
+      (ok (search "<backup><duration>16</duration></backup>" xml))))
+  (testing "voice element comes before type"
+    (let ((xml (lilylink:convert-string "\\relative c' { << { c4 } \\\\ { e4 } >> }")))
+      (ok (search "<duration>4</duration><voice>1</voice><type>quarter</type>" xml))))
+  (testing "a single voice emits no voice element"
+    (let ((xml (lilylink:convert-string "\\relative c' { c4 d }")))
+      (ok (not (search "<voice>" xml))))))
+
 (deftest convert-file-roundtrip
   (testing "convert-file reads a .ly file"
     (let ((path (uiop:with-temporary-file (:pathname p :keep t :type "ly")

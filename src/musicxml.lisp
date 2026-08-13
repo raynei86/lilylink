@@ -9,6 +9,41 @@
 (defparameter +clef-signs+
   '((:treble "G" 2) (:alto "C" 3) (:tenor "C" 4) (:bass "F" 4)))
 
+;;; When non-NIL, every note/rest carries a <voice> element (polyphonic
+;;; scores).  Bound in emit-score.
+(defvar *emit-voice* nil)
+
+(defun event-voice-of (ev)
+  (typecase ev
+    (note (note-voice ev))
+    (rest-event (rest-voice ev))
+    (chord (chord-voice ev))
+    (t 1)))
+
+(defun score-polyphonic-p (score)
+  (loop for staff in (score-staves score)
+        thereis (loop for m in (staff-measures staff)
+                      thereis (loop for ev in (measure-events m)
+                                    thereis (> (event-voice-of ev) 1)))))
+
+(defun group-by-voice (events)
+  "Group EVENTS by voice number, returning ((voice . events) ...) in order."
+  (let ((table (make-hash-table)))
+    (dolist (ev events)
+      (push ev (gethash (event-voice-of ev) table)))
+    (sort (loop for voice being the hash-keys of table
+                collect (cons voice (nreverse (gethash voice table))))
+          #'< :key #'car)))
+
+(defun voice-total (events divisions)
+  "Total duration of EVENTS in division units (a chord counts once)."
+  (loop for ev in events
+        sum (typecase ev
+              (note (duration-units (note-duration ev) divisions))
+              (rest-event (duration-units (rest-duration ev) divisions))
+              (chord (duration-units (chord-duration ev) divisions))
+              (t 0))))
+
 (defun duration-type-name (log)
   (unless (< log (length +duration-type-names+))
     (error "Cannot emit a note of duration log2 ~D" log))
@@ -143,6 +178,8 @@
     (write-string "<tie type=\"stop\"/>" s))
   (when (note-tie-start-p note)
     (write-string "<tie type=\"start\"/>" s))
+  (when *emit-voice*
+    (format s "<voice>~D</voice>" (note-voice note)))
   (format s "<type>~A</type>"
           (duration-type-name (duration-log (note-duration note))))
   (emit-dots s (duration-dots (note-duration note)))
@@ -151,7 +188,13 @@
 
 (defun emit-rest (s rest divisions)
   (write-string "<note><rest/>" s)
-  (emit-duration s (rest-duration rest) divisions)
+  (format s "<duration>~D</duration>"
+          (duration-in-divisions (rest-duration rest) divisions))
+  (when *emit-voice*
+    (format s "<voice>~D</voice>" (rest-voice rest)))
+  (format s "<type>~A</type>"
+          (duration-type-name (duration-log (rest-duration rest))))
+  (emit-dots s (duration-dots (rest-duration rest)))
   (emit-notations s rest)
   (write-string "</note>" s))
 
@@ -210,8 +253,17 @@
   (format s "<measure number=\"~D\">" (measure-number measure))
   (when (measure-attributes measure)
     (emit-attributes s (measure-attr-data measure) divisions))
-  (dolist (ev (measure-events measure))
-    (emit-event s ev divisions))
+  (let* ((groups (group-by-voice (measure-events measure)))
+         (totals (mapcar (lambda (group) (voice-total (cdr group) divisions))
+                         groups)))
+    (loop for group in groups
+          for total in totals
+          for i from 0
+          do (when (plusp i)
+               (format s "<backup><duration>~D</duration></backup>"
+                       (nth (1- i) totals)))
+             (dolist (ev (cdr group))
+               (emit-event s ev divisions))))
   (write-string "</measure>" s))
 
 (defun emit-part (s staff)
@@ -221,10 +273,11 @@
   (write-string "</part>" s))
 
 (defun emit-score (s score)
-  (write-string "<score-partwise version=\"3.1\">" s)
-  (write-string "<part-list><score-part id=\"P1\"><part-name>Music</part-name>"
-                s)
-  (write-string "</score-part></part-list>" s)
-  (let ((staff (first (score-staves score))))
-    (emit-part s staff))
-  (write-string "</score-partwise>" s))
+  (let ((*emit-voice* (score-polyphonic-p score)))
+    (write-string "<score-partwise version=\"3.1\">" s)
+    (write-string "<part-list><score-part id=\"P1\"><part-name>Music</part-name>"
+                  s)
+    (write-string "</score-part></part-list>" s)
+    (let ((staff (first (score-staves score))))
+      (emit-part s staff))
+    (write-string "</score-partwise>" s)))
