@@ -7,6 +7,18 @@
 (defstruct (rel-ctx (:constructor make-rel-ctx (&optional (ref :unset))))
   ref)
 
+;;; The state that must be isolated per voice and reset by rests: open
+;;; spanners (ties, slurs, hairpins, glissandos, trills) and the current
+;;; arpeggio direction.  Grouping it here keeps save/restore and reset to a
+;;; single call (see parse-simultaneous, parse-voice-expression, parse-rest-event).
+(defstruct (spanner-state (:constructor make-spanner-state (&key ties slurs wedge glissando trill arpeggio)))
+  (ties nil)
+  (slurs nil)
+  (wedge nil)
+  (glissando nil)
+  (trill nil)
+  (arpeggio nil))
+
 (defstruct (parser (:constructor make-parser (tokens)))
   tokens
   (pos 0)
@@ -14,12 +26,11 @@
   (last-duration nil)
   (last-event nil)
   (voice 1)
-  (pending-ties nil)
-  (pending-slurs nil)
-  (pending-wedge nil)
-  (pending-glissando nil)
-  (pending-trill nil)
-  (arpeggio-direction nil))
+  (spanners (make-spanner-state)))
+
+(defun reset-spanner-state (p)
+  "Drop all open spanners and the arpeggio direction."
+  (setf (parser-spanners p) (make-spanner-state)))
 
 (defun parse-music (string)
   "Parse a LilyPond source string into a list of events."
@@ -92,7 +103,7 @@ duration (LOG . DOTS) or NIL, updating the parser's last-duration."
   (list (pitch-step pitch) (pitch-alter pitch) (pitch-octave pitch)))
 
 (defun pitch-in-pending (p pitch)
-  (member (pitch-key pitch) (parser-pending-ties p) :test #'equal))
+  (member (pitch-key pitch) (spanner-state-ties (parser-spanners p)) :test #'equal))
 
 (defun consume-tie (p)
   (let ((tok (peek-token p)))
@@ -108,7 +119,7 @@ duration (LOG . DOTS) or NIL, updating the parser's last-duration."
       (setf (note-tie-stop-p note) t))
     (when (consume-tie p)
       (setf (note-tie-start-p note) t)
-      (push (pitch-key pitch) (parser-pending-ties p)))
+      (push (pitch-key pitch) (spanner-state-ties (parser-spanners p))))
     note))
 
 ;;; Expressive marks attached to a note, rest, or chord via \name commands,
@@ -150,31 +161,31 @@ duration (LOG . DOTS) or NIL, updating the parser's last-duration."
                   (advance-token p)
                   (close-pending-wedge p event)
                   (let ((type (if (eq cmd :cr) :crescendo :diminuendo)))
-                    (setf (parser-pending-wedge p) (cons type 1))
+                    (setf (spanner-state-wedge (parser-spanners p)) (cons type 1))
                     (push (make-wedge 1 type) (event-attachments event))))
                  ((member cmd '(:endcr :enddecr))
                   (advance-token p)
                   (close-pending-wedge p event))
                  ((eq cmd :glissando)
                   (advance-token p)
-                  (setf (parser-pending-glissando p) 1)
+                  (setf (spanner-state-glissando (parser-spanners p)) 1)
                   (push (make-glissando 1 :start) (event-attachments event)))
                  ((eq cmd :starttrillspan)
                   (advance-token p)
-                  (when-let ((trill (parser-pending-trill p)))
+                  (when-let ((trill (spanner-state-trill (parser-spanners p))))
                     (push (make-trill trill :stop) (event-attachments event)))
-                  (setf (parser-pending-trill p) 1)
+                  (setf (spanner-state-trill (parser-spanners p)) 1)
                   (push (make-trill 1 :start) (event-attachments event)))
                  ((eq cmd :stoptrillspan)
                   (advance-token p)
-                  (when-let ((trill (parser-pending-trill p)))
+                  (when-let ((trill (spanner-state-trill (parser-spanners p))))
                     (push (make-trill trill :stop) (event-attachments event))
-                    (setf (parser-pending-trill p) nil)))
+                    (setf (spanner-state-trill (parser-spanners p)) nil)))
                  ((eq cmd :arpeggio)
                   (advance-token p)
-                  (push (make-arpeggio (parser-arpeggio-direction p))
+                  (push (make-arpeggio (spanner-state-arpeggio (parser-spanners p)))
                         (event-attachments event))
-                  (setf (parser-arpeggio-direction p) nil))
+                  (setf (spanner-state-arpeggio (parser-spanners p)) nil))
                  ((eq cmd :bendafter)
                   (advance-token p)
                   (parse-bend-args p event))
@@ -184,28 +195,28 @@ duration (LOG . DOTS) or NIL, updating the parser's last-duration."
          (parse-attached-mark p event))
         (:slur-open
          (advance-token p)
-         (let ((number (1+ (length (parser-pending-slurs p)))))
-           (push (cons nil number) (parser-pending-slurs p))
+         (let ((number (1+ (length (spanner-state-slurs (parser-spanners p))))))
+           (push (cons nil number) (spanner-state-slurs (parser-spanners p)))
            (push (make-slur number :start) (event-attachments event))))
         (:slur-close
          (advance-token p)
-         (let ((spec (pop (parser-pending-slurs p))))
+         (let ((spec (pop (spanner-state-slurs (parser-spanners p)))))
            (when spec
              (push (make-slur (cdr spec) :stop) (event-attachments event)))))
         (:phrase-open
          (advance-token p)
-         (let ((number (1+ (length (parser-pending-slurs p)))))
-           (push (cons t number) (parser-pending-slurs p))
+         (let ((number (1+ (length (spanner-state-slurs (parser-spanners p))))))
+           (push (cons t number) (spanner-state-slurs (parser-spanners p)))
            (push (make-slur number :start t) (event-attachments event))))
         (:phrase-close
          (advance-token p)
-         (let ((spec (pop (parser-pending-slurs p))))
+         (let ((spec (pop (spanner-state-slurs (parser-spanners p)))))
            (when spec
              (push (make-slur (cdr spec) :stop t) (event-attachments event)))))
         (:wedge-start
          (advance-token p)
          (close-pending-wedge p event)
-         (setf (parser-pending-wedge p) (cons (token-value tok) 1))
+         (setf (spanner-state-wedge (parser-spanners p)) (cons (token-value tok) 1))
          (push (make-wedge 1 (token-value tok)) (event-attachments event)))
         (:wedge-stop
          (advance-token p)
@@ -215,16 +226,16 @@ duration (LOG . DOTS) or NIL, updating the parser's last-duration."
 
 (defun close-pending-wedge (p event)
   "Close the open hairpin, if any, marking EVENT as its stop."
-  (when-let ((wedge (parser-pending-wedge p)))
+  (when-let ((wedge (spanner-state-wedge (parser-spanners p))))
     (push (make-wedge (cdr wedge) :stop) (event-attachments event))
-    (setf (parser-pending-wedge p) nil)))
+    (setf (spanner-state-wedge (parser-spanners p)) nil)))
 
 ;;; A glissando connects to the immediately following note or chord, so the
 ;;; next event stops any open glissando.  Trill spans are ended explicitly.
 (defun add-implicit-spanner-stops (p event)
-  (when-let ((glissando (parser-pending-glissando p)))
+  (when-let ((glissando (spanner-state-glissando (parser-spanners p))))
     (push (make-glissando glissando :stop) (event-attachments event))
-    (setf (parser-pending-glissando p) nil)))
+    (setf (spanner-state-glissando (parser-spanners p)) nil)))
 
 (defun parse-bend-args (p event)
   ;; \bendAfter has been consumed.  Read the interval; only its sign matters.
@@ -247,7 +258,7 @@ duration (LOG . DOTS) or NIL, updating the parser's last-duration."
          (pt (token-value tok))
          (pitch (resolve-pitch-token p ctx pt))
          (tie-stop-p (pitch-in-pending p pitch)))
-    (setf (parser-pending-ties p) nil)
+    (setf (spanner-state-ties (parser-spanners p)) nil)
     (let ((note (finish-note p pitch (effective-duration p (pitch-token-duration pt))
                              tie-stop-p)))
       (add-implicit-spanner-stops p note)
@@ -256,9 +267,7 @@ duration (LOG . DOTS) or NIL, updating the parser's last-duration."
 (defun parse-rest-event (p ctx)
   (declare (ignore ctx))
   ;; A rest (or spacer) breaks pending ties and spanners.
-  (setf (parser-pending-ties p) nil)
-  (setf (parser-pending-glissando p) nil)
-  (setf (parser-pending-trill p) nil)
+  (reset-spanner-state p)
   (let* ((tok (advance-token p))
          (duration (effective-duration p (token-value tok))))
     (let ((rest (make-rest duration)))
@@ -276,7 +285,7 @@ duration (LOG . DOTS) or NIL, updating the parser's last-duration."
                                         :dots (cdr val))))
          (pitch (parser-last-pitch p))
          (tie-stop-p (pitch-in-pending p pitch)))
-    (setf (parser-pending-ties p) nil)
+    (setf (spanner-state-ties (parser-spanners p)) nil)
     (let ((note (finish-note p pitch duration tie-stop-p)))
       (add-implicit-spanner-stops p note)
       (parse-post-events p note))))
@@ -298,7 +307,7 @@ duration (LOG . DOTS) or NIL, updating the parser's last-duration."
           (push (list pitch tie-stop-p tie-start-p) entries))))
     (expect-token p :chord-close)
     ;; The chord is fully matched: drop any pending ties it did not consume.
-    (setf (parser-pending-ties p) nil)
+    (setf (spanner-state-ties (parser-spanners p)) nil)
     ;; The reference for anything following the chord is its first note.
     (when (and ctx first-pitch)
       (setf (rel-ctx-ref ctx) first-pitch))
@@ -322,7 +331,7 @@ duration (LOG . DOTS) or NIL, updating the parser's last-duration."
                                   (setf (note-tie-stop-p note) t))
                                 (when (or tie-start-p chord-tie-p)
                                   (setf (note-tie-start-p note) t)
-                                  (push (pitch-key pitch) (parser-pending-ties p)))
+                                  (push (pitch-key pitch) (spanner-state-ties (parser-spanners p))))
                                 note)))
                            (nreverse entries))))
       (let ((chord (make-chord notes duration)))
@@ -429,11 +438,7 @@ duration (LOG . DOTS) or NIL, updating the parser's last-duration."
 (defun parse-voice-expression (p ctx voice-number)
   "Parse one voice inside << >>, isolating spanners from other voices."
   (setf (parser-voice p) voice-number)
-  (setf (parser-pending-ties p) nil)
-  (setf (parser-pending-slurs p) nil)
-  (setf (parser-pending-wedge p) nil)
-  (setf (parser-pending-glissando p) nil)
-  (setf (parser-pending-trill p) nil)
+  (reset-spanner-state p)
   (setf (parser-last-pitch p) nil)
   (setf (parser-last-duration p) nil)
   (consume-voice-style-commands p)
@@ -456,11 +461,7 @@ duration (LOG . DOTS) or NIL, updating the parser's last-duration."
 (defun parse-simultaneous (p ctx)
   "Parse << expr1 \\\\ expr2 ... >> into a flat list of voice-tagged events.
 << has been consumed."
-  (let ((saved-ties (parser-pending-ties p))
-        (saved-slurs (parser-pending-slurs p))
-        (saved-wedge (parser-pending-wedge p))
-        (saved-glissando (parser-pending-glissando p))
-        (saved-trill (parser-pending-trill p))
+  (let ((saved-spanners (copy-spanner-state (parser-spanners p)))
         (saved-pitch (parser-last-pitch p))
         (saved-duration (parser-last-duration p)))
     (unwind-protect
@@ -485,11 +486,7 @@ duration (LOG . DOTS) or NIL, updating the parser's last-duration."
              (parser-error p "Simultaneous music without \\\\ (chord-forming << >>) is not supported"))
            (apply #'nconc (nreverse voices)))
       (setf (parser-voice p) 1)
-      (setf (parser-pending-ties p) saved-ties)
-      (setf (parser-pending-slurs p) saved-slurs)
-      (setf (parser-pending-wedge p) saved-wedge)
-      (setf (parser-pending-glissando p) saved-glissando)
-      (setf (parser-pending-trill p) saved-trill)
+      (setf (parser-spanners p) saved-spanners)
       (setf (parser-last-pitch p) saved-pitch)
       (setf (parser-last-duration p) saved-duration))))
 
@@ -514,9 +511,9 @@ duration (LOG . DOTS) or NIL, updating the parser's last-duration."
               (when (parser-last-event p)
                 (push (make-mark '(:articulation "breath-mark"))
                       (event-attachments (parser-last-event p)))))
-             (:arpeggioarrowup (setf (parser-arpeggio-direction p) :up))
-             (:arpeggioarrowdown (setf (parser-arpeggio-direction p) :down))
-             (:arpeggionormal (setf (parser-arpeggio-direction p) nil))
+             (:arpeggioarrowup (setf (spanner-state-arpeggio (parser-spanners p)) :up))
+             (:arpeggioarrowdown (setf (spanner-state-arpeggio (parser-spanners p)) :down))
+             (:arpeggionormal (setf (spanner-state-arpeggio (parser-spanners p)) nil))
              (t (unless (member (token-value tok) +voice-style-commands+)
                   (parser-error p "Unsupported command \\~A" (token-value tok))))))
           (:simult-open
