@@ -175,7 +175,8 @@ no runtime dependency on LilyPond.
 ### MusicXML emission
 
 - `score-partwise` version `3.1`.
-- Single `<part id="P1">` with `<part-name>Music</part-name>`.
+- One `<part id="PN">` per staff (a `\new PianoStaff` with two `\new Staff`s
+  yields `P1`/`P2`), each with `<part-name>Music</part-name>`.
 - `<attributes>` emitted per measure: `<divisions>`, `<key>` (`<fifths>`,
   `<mode>`), `<time>` (`<beats>`, `<beat-type>`), `<clef>` (`<sign>`,
   `<line>`, optional `<octave-change>`).
@@ -227,6 +228,9 @@ Spanners:
 - `\startTrillSpan`/`\stopTrillSpan` → `<trill-mark/>` plus `<wavy-line>`.
 - `\arpeggio` on a chord → `<arpeggiate/>`, with `\arpeggioArrowUp`/`Down`
   selecting the direction.
+- `\tempo 4 = 120`, `\tempo "Allegro" 4 = 120`, and `\tempo "Andante"` →
+  a `<direction>` with optional `<words>`, `<metronome>` (beat-unit derived
+  from the numerator, `<per-minute>`), and `<sound tempo>`.
 - `\bendAfter ±N` → `<doit/>` (up) or `<falloff/>` (down).
 
 ## What is not implemented
@@ -271,15 +275,20 @@ chapters:
   block-per-voice with `<voice>N</voice>` and `<backup>` rewinds. `\voiceOne`
   … `\oneVoice` and style commands are consumed and ignored (the voice number
   distinguishes voices); spanners do not cross voices.
+- `\new Staff { … }` / `\new PianoStaff << \new Staff { … } \new Staff { … } >>`
+  inside `<< >>` (without `\\`) parse as separate staves (see Staff notation).
 - Deferred: the chord-forming `<< {a} {b} >>` construct (no `\\`, which would
-  merge identical rhythms into chords), `\new Voice`, `\new Staff` /
-  multi-staff, `\partcombine`, `\voices`, and collision merging. `|` bar
-  checks advance only their own voice and are expected to align.
+  merge identical rhythms into chords), `\partcombine`, `\voices`, and
+  collision merging. `|` bar checks advance only their own voice and are
+  expected to align.
 
 ### Staff notation (ch. 6)
 
-- Multiple staves / staff groups: `\new Staff`, `\new PianoStaff`,
-  `\new ChoirStaff`, `\with`, instrument names.
+- Multiple staves: `\new Staff { … }` and `\new PianoStaff << \new Staff { … }
+  \new Staff { … } >>` produce one MusicXML part per staff, each with its own
+  clef/key/time attributes. `\new Voice { … }` is accepted (a voice on the
+  current staff). Unsupported: `\new ChoirStaff`, `\with`, instrument names,
+  staff groups/`<part-group>`.
 - `\key` church modes (`\ionian` `\dorian` `\phrygian` `\lydian`
   `\mixolydian` `\aeolian` `\locrian`) and custom modes.
 
@@ -297,9 +306,8 @@ chapters:
 
 ### Structural / emitter gaps
 
-- Only one part and one staff; `id="P1"` and `part-name "Music"` are
-  hardcoded.
-- No `<voice>` element (single-voice assumption).
+- `part-name` is hardcoded to "Music"; no `<part-group>` for PianoStaff
+  grouping, and staff indices are numbered by order of `\new Staff`.
 - Header metadata (`title`, `composer`, …) is dropped rather than emitted as
   `<work>` / `<creator>`.
 - Clef names other than `treble`/`alto`/`tenor`/`bass` error at emission
@@ -355,7 +363,9 @@ closing delimiter was required — are always hard `lilylink-parse-error`s.
   expressive marks (articulations, ornaments, dynamics, technical, slurs,
   phrasing slurs, hairpins, glissando, trill spans, arpeggio, breath, bends),
   voices (`<< \\ >>` parsing, voice tagging, spanner isolation, shared-measure
-  layout, `<voice>`/`<backup>` emission), error handling (condition hierarchy,
+  layout, `<voice>`/`<backup>` emission), tempo (`\tempo` metronome/text,
+  `<sound>`), multi-staff (`\new Staff`/`\new PianoStaff`, per-staff clefs,
+  full piano-score round-trip), error handling (condition hierarchy,
   warning messages, strict vs. lenient mode, `skip-event`/`skip-command`/
   `abort-parse` restarts), and MusicXML emission (structure, attributes,
   dotted notes, rests, chords, tie and mark markers, `\score` wrappers, file
@@ -367,8 +377,8 @@ closing delimiter was required — are always hard `lilylink-parse-error`s.
 
 ## Roadmap (suggested order)
 
-1. Multiple staves and staff groups (`\new Staff`, `\new PianoStaff`).
-2. `\new Voice`/`\partcombine`, and the chord-forming `<< {a} {b} >>`.
+1. Staff groups (`\new ChoirStaff`), `\with`, instrument names, `<part-group>`.
+2. `\partcombine` and the chord-forming `<< {a} {b} >>`.
 3. `\chordmode` and lyrics.
 4. `\transpose` and quarter-tone accidentals.
 5. Header metadata into MusicXML `<work>` / `<creator>`.
