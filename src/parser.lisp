@@ -83,7 +83,7 @@
 
 (defun parser-error (p fmt &rest args)
   (let ((tok (peek-token p)))
-    (lilylink-error-at (token-line-or-0 tok) (token-col-or-0 tok) fmt args)))
+    (apply #'lilylink-error-at (token-line-or-0 tok) (token-col-or-0 tok) fmt args)))
 
 ;;; Push EVENT onto the accumulating list, record it as the parser's last event
 ;;; (used by \breathe), and return the updated list so callers can setf it.

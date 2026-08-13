@@ -267,4 +267,9 @@
           (lilylink:lilylink-parse-error () t))))
   (testing "durations beyond the supported maximum are rejected cleanly"
     (ok (handler-case (progn (lilylink:parse-music "{ c2048 }") nil)
-          (lilylink:lilylink-parse-error () t)))))
+          (lilylink:lilylink-parse-error () t))))
+  (testing "format arguments are not double-wrapped in error messages"
+    (let ((msg (handler-case (lilylink:parse-music "{ \\transpose }")
+                 (lilylink:lilylink-parse-error (c)
+                   (lilylink:parse-error-message c)))))
+      (ok (equal msg "Unsupported command \\TRANSPOSE")))))

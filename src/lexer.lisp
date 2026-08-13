@@ -59,7 +59,7 @@
                                  :line tok-line :col tok-col)
                      tokens))
              (err (fmt &rest args)
-               (lilylink-error-at tok-line tok-col fmt args))
+               (apply #'lilylink-error-at tok-line tok-col fmt args))
              (skip-comment ()
                (consume)  ; the %
                (if (and (peekc) (char= (peekc) #\{))
