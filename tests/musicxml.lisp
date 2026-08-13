@@ -1,5 +1,32 @@
 (in-package :lilylink/tests/main)
 
+(defun xml-tag-text (tag xml)
+  "Return the text content of the first <TAG>...</TAG> in XML, or NIL."
+  (let ((start (search (format nil "<~A>" tag) xml)))
+    (when start
+      (let* ((begin (+ start (length (format nil "<~A>" tag))))
+             (end (search (format nil "</~A>" tag) xml :start2 begin)))
+        (when end
+          (subseq xml begin end))))))
+
+(defun key-xml (key mode)
+  "Convert a one-note piece in KEY \\MODE and return its <fifths>/<mode> text."
+  (let ((xml (lilylink:convert-string (format nil "{ \\key ~A \\~A c4 }" key mode))))
+    (list (xml-tag-text "fifths" xml)
+          (xml-tag-text "mode" xml))))
+
+(deftest convert-key-signatures
+  (testing "sharp keys count fifths"
+    (ok (equal (key-xml "d" "major") '("2" "major")))
+    (ok (equal (key-xml "e" "major") '("4" "major"))))
+  (testing "flat keys count negative fifths"
+    (ok (equal (key-xml "f" "major") '("-1" "major")))
+    (ok (equal (key-xml "bes" "major") '("-2" "major"))))
+  (testing "minor keys are relative to the major"
+    (ok (equal (key-xml "a" "minor") '("0" "minor")))
+    (ok (equal (key-xml "e" "minor") '("1" "minor")))
+    (ok (equal (key-xml "d" "minor") '("-1" "minor")))))
+
 (deftest convert-basic-melody
   (testing "single staff score structure"
     (let ((xml (lilylink:convert-string "\\relative c' { c4 d e f | g2 a | b1 }")))
