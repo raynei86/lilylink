@@ -67,8 +67,10 @@ no runtime dependency on LilyPond.
 - `lilylink:convert-file` `(path)` → MusicXML string (reads UTF-8 via uiop).
 - `lilylink:tokenize` / `lilylink:parse-music` / `lilylink:build-score` /
   `lilylink:emit-score` — pipeline stages, exposed for testing.
-- `lilylink:lilylink-parse-error` — condition with `parse-error-message`,
-  `parse-error-line`, `parse-error-col`.
+- Conditions: `lilylink-error` (root), `lilylink-parse-error` (has
+  `parse-error-message`/`line`/`col`/`token`), `lilylink-emit-error`
+  (internal invariants), `lilylink-warning` (has `warning-message`/`line`/`col`).
+- Recovery: see the Error handling section below.
 
 ## What is implemented
 
@@ -314,8 +316,33 @@ These are places where behavior is deliberately lenient or lossy:
 - **`s` spacer rests** become ordinary visible rests.
 - **Single global `divisions`** per score.
 - **MusicXML is not schema-validated** by the library.
-- Error recovery is minimal: the first `lilylink-parse-error` aborts the
-  whole conversion.
+
+## Error handling and recovery
+
+The pipeline signals conditions from a single hierarchy rooted at
+`lilylink-error`:
+
+- `lilylink-parse-error` — bad input, carrying the source `line`/`col` and the
+  offending `token` (or NIL).
+- `lilylink-emit-error` — internal invariants (should not fire on valid input).
+- `lilylink-warning` — recoverable problems, reported but not fatal.
+
+**Default lenient behavior.** By default (`*strict-mode*` is NIL), recoverable
+problems — unsupported `\commands`, unknown articulations, isolated durations,
+malformed `\key`/`\clef` arguments, and simultaneous-music mistakes — signal a
+`lilylink-warning` and are skipped, so a conversion keeps going and produces
+partial output. Bind `lilylink:*strict-mode*` to `t` to turn those into
+`lilylink-parse-error` signals instead.
+
+**Recovery restarts.** The parser establishes restarts that a caller can drive
+from a `handler-bind` (all available regardless of strict mode):
+
+- `skip-event` — drop the offending event and continue.
+- `skip-command` — drop an unsupported command (and its arguments) and continue.
+- `abort-parse` — stop parsing and return the events collected so far.
+
+Structural errors — unterminated strings/blocks/`<<…>>`, and EOF where a
+closing delimiter was required — are always hard `lilylink-parse-error`s.
 
 ## Testing
 
@@ -328,9 +355,11 @@ These are places where behavior is deliberately lenient or lossy:
   expressive marks (articulations, ornaments, dynamics, technical, slurs,
   phrasing slurs, hairpins, glissando, trill spans, arpeggio, breath, bends),
   voices (`<< \\ >>` parsing, voice tagging, spanner isolation, shared-measure
-  layout, `<voice>`/`<backup>` emission), error signaling, and MusicXML
-  emission (structure, attributes, dotted notes, rests, chords, tie and mark
-  markers, `\score` wrappers, file round-trip).
+  layout, `<voice>`/`<backup>` emission), error handling (condition hierarchy,
+  warning messages, strict vs. lenient mode, `skip-event`/`skip-command`/
+  `abort-parse` restarts), and MusicXML emission (structure, attributes,
+  dotted notes, rests, chords, tie and mark markers, `\score` wrappers, file
+  round-trip).
 - Relative-octave behavior was cross-validated against the real `lilypond`
   binary (via `\displayMusic` and MIDI output), including the counterintuitive
   chord-octave-mark results and the "nested `\relative` leaves the enclosing
