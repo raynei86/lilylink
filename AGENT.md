@@ -93,26 +93,52 @@ stages can consume them without re-scanning the raw source.
 
 This repository records LLM participation in commits. **Every commit must be
 marked with a co-author trailer**, regardless of whether the change was written
-by a human, an LLM, or a combination:
+by a human, an LLM, or a combination. The trailer credits whichever LLM model
+produced the change; it is not tied to a specific vendor.
+
+The `commit-msg` hook in `.githooks/` appends the trailer automatically when a
+commit is created through `git`. It resolves the identity in this order:
+
+1. the `LLM_COAUTHOR` environment variable, or
+2. the `llm.coauthor` git config value.
+
+Set the current model before committing, e.g.:
 
 ```
-Co-authored-by: Deepseek V4 <info@deepseek.ai>
+git config llm.coauthor "Claude <noreply@anthropic.com>"
 ```
 
-The trailer must appear in the commit message body (blank line followed by the
-trailer), as a standard Git trailer, e.g.:
+The value is `Name <email>`; the hook prepends `Co-authored-by:` and appends it
+as a standard Git trailer (blank line followed by the trailer), e.g.:
 
 ```
 feat(parser): add top-level block parsing
 
 Parse top-level Lilypond blocks into an intermediate structure.
 
-Co-authored-by: Deepseek V4 <info@deepseek.ai>
+Co-authored-by: Claude <noreply@anthropic.com>
 ```
 
-- The trailer is automatically appended by the `commit-msg` hook in
-  `.githooks/` when a commit is created through `git` (see `.githooks/commit-msg`).
-- Do not remove, reorder, or edit an existing `Co-authored-by: Deepseek V4`
-  trailer; only edit it if the actual LLM identity changes.
+### Model initialization
+
+On initialization, **every model must check `$LLM_COAUTHOR`**. If the variable
+is unset, empty, or already names a different model, the model must export it
+with its own identity before committing anything:
+
+```sh
+export LLM_COAUTHOR="<self> <<self-email>>"
+```
+
+- Do not overwrite `LLM_COAUTHOR` when it already identifies the model that is
+  currently working; leave it as-is.
+- Exporting the variable is session-scoped; if the identity is not persisted
+  for the session, also record it with `git config llm.coauthor` so the hook
+  keeps working in later sessions.
+
+- If neither `LLM_COAUTHOR` nor `llm.coauthor` is set, the hook adds nothing.
+- The hook is idempotent: it leaves a message untouched if the trailer is
+  already present.
+- Do not remove, reorder, or edit an existing `Co-authored-by:` trailer; only
+  change it when the actual LLM identity changes.
 - If you commit in a way that bypasses the hook (e.g. `git commit --no-verify`),
   add the trailer manually.

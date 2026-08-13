@@ -2,15 +2,32 @@
 
 # commit-msg hook for lilylink
 #
-# Auto-appends the LLM co-author trailer to commit messages so every commit
-# is marked with LLM participation. Idempotent: if the trailer is already
-# present (in the whole message, trailers or body), the message is untouched.
+# Appends an LLM co-author trailer to commit messages so every commit can be
+# marked with LLM participation. The identity is resolved in order of
+# precedence:
+#   1. the LLM_COAUTHOR environment variable
+#   2. git config llm.coauthor  (e.g. "Claude <noreply@anthropic.com>")
+# If neither is set, the hook does nothing (no trailer is added).
+#
+# Idempotent: if the resulting trailer is already present anywhere in the
+# message, the message is left untouched.
 
 FILE="$1"
-COAUTHOR="Co-authored-by: Deepseek V4 <info@deepseek.ai>"
+
+COAUTHOR="${LLM_COAUTHOR:-}"
+if [ -z "$COAUTHOR" ]; then
+    COAUTHOR="$(git config --get llm.coauthor 2>/dev/null || true)"
+fi
+
+# No identity configured -> nothing to append.
+if [ -z "$COAUTHOR" ]; then
+    exit 0
+fi
+
+TRAILER="Co-authored-by: $COAUTHOR"
 
 # Exit early if the trailer already exists anywhere in the message.
-if grep -qF "Co-authored-by: Deepseek V4" "$FILE"; then
+if grep -qF "$TRAILER" "$FILE"; then
     exit 0
 fi
 
@@ -22,5 +39,5 @@ trap 'rm -f "$TMP"' EXIT HUP INT TERM
 # is a proper Git trailer (requires a blank line after the last paragraph).
 {
     sed -e :a -e '/[^[:space:]]/!{s/.*//;N;ba;}' -e '/^$/d' "$FILE"
-    printf '\n%s\n' "$COAUTHOR"
+    printf '\n%s\n' "$TRAILER"
 } > "$TMP" && mv "$TMP" "$FILE"
