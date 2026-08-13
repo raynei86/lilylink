@@ -32,6 +32,29 @@
   "Drop all open spanners and the arpeggio direction."
   (setf (parser-spanners p) (make-spanner-state)))
 
+;;; Short accessors for one spanner slot of the parser: (spanner p :ties) etc.
+;;; Handed out to the post-event dispatch table as lambdas so handlers read
+;;; (ties p) / (setf (ties p) ...).
+(defun spanner (p name)
+  (let ((s (parser-spanners p)))
+    (ecase name
+      (:ties (spanner-state-ties s))
+      (:slurs (spanner-state-slurs s))
+      (:wedge (spanner-state-wedge s))
+      (:glissando (spanner-state-glissando s))
+      (:trill (spanner-state-trill s))
+      (:arpeggio (spanner-state-arpeggio s)))))
+
+(defun (setf spanner) (value p name)
+  (let ((s (parser-spanners p)))
+    (ecase name
+      (:ties (setf (spanner-state-ties s) value))
+      (:slurs (setf (spanner-state-slurs s) value))
+      (:wedge (setf (spanner-state-wedge s) value))
+      (:glissando (setf (spanner-state-glissando s) value))
+      (:trill (setf (spanner-state-trill s) value))
+      (:arpeggio (setf (spanner-state-arpeggio s) value)))))
+
 (defun parse-music (string)
   "Parse a LilyPond source string into a list of events."
   (parse-file-events (make-parser (coerce (tokenize string) 'vector))))
@@ -137,6 +160,60 @@ duration (LOG . DOTS) or NIL, updating the parser's last-duration."
         (close-pending-wedge p event))
       (push (make-mark spec) (event-attachments event)))))
 
+(defun handle-hairpin (p event cmd)
+  (advance-token p)
+  (close-pending-wedge p event)
+  (let ((type (if (eq cmd :cr) :crescendo :diminuendo)))
+    (setf (spanner p :wedge) (cons type 1))
+    (push (make-wedge 1 type) (event-attachments event))))
+
+(defun handle-hairpin-stop (p event cmd)
+  (declare (ignore cmd))
+  (advance-token p)
+  (close-pending-wedge p event))
+
+(defun handle-glissando (p event cmd)
+  (declare (ignore cmd))
+  (advance-token p)
+  (setf (spanner p :glissando) 1)
+  (push (make-glissando 1 :start) (event-attachments event)))
+
+(defun handle-trill-span (p event cmd)
+  (advance-token p)
+  (when-let ((open (spanner p :trill)))
+    (push (make-trill open :stop) (event-attachments event)))
+  (ecase cmd
+    (:starttrillspan
+     (setf (spanner p :trill) 1)
+     (push (make-trill 1 :start) (event-attachments event)))
+    (:stoptrillspan
+     (setf (spanner p :trill) nil))))
+
+(defun handle-arpeggio (p event cmd)
+  (declare (ignore cmd))
+  (advance-token p)
+  (push (make-arpeggio (spanner p :arpeggio)) (event-attachments event))
+  (setf (spanner p :arpeggio) nil))
+
+(defun handle-bend (p event cmd)
+  (declare (ignore cmd))
+  (advance-token p)
+  (parse-bend-args p event))
+
+;;; Special post-event commands (those that do more than attach a plain mark),
+;;; dispatched by keyword from parse-post-events.  Each handler consumes its
+;;; own command token and mutates the parser/event.
+(defparameter +post-event-commands+
+  '((:cr . handle-hairpin)
+    (:decr . handle-hairpin)
+    (:endcr . handle-hairpin-stop)
+    (:enddecr . handle-hairpin-stop)
+    (:glissando . handle-glissando)
+    (:starttrillspan . handle-trill-span)
+    (:stoptrillspan . handle-trill-span)
+    (:arpeggio . handle-arpeggio)
+    (:bendafter . handle-bend)))
+
 (defun parse-post-events (p event)
   (loop
     (let ((tok (peek-token p)))
@@ -150,73 +227,44 @@ duration (LOG . DOTS) or NIL, updating the parser's last-duration."
            (push (make-mark spec) (event-attachments event))))
         (:command
          (let* ((cmd (token-value tok))
-                (spec (lookup-mark cmd)))
+                (spec (lookup-mark cmd))
+                (entry (assoc cmd +post-event-commands+)))
            (cond (spec
                   (advance-token p)
                   ;; An absolute dynamic terminates an open hairpin.
                   (when (member (car spec) '(:dynamic :other-dynamics))
                     (close-pending-wedge p event))
                   (push (make-mark spec) (event-attachments event)))
-                 ((member cmd '(:cr :decr))
-                  (advance-token p)
-                  (close-pending-wedge p event)
-                  (let ((type (if (eq cmd :cr) :crescendo :diminuendo)))
-                    (setf (spanner-state-wedge (parser-spanners p)) (cons type 1))
-                    (push (make-wedge 1 type) (event-attachments event))))
-                 ((member cmd '(:endcr :enddecr))
-                  (advance-token p)
-                  (close-pending-wedge p event))
-                 ((eq cmd :glissando)
-                  (advance-token p)
-                  (setf (spanner-state-glissando (parser-spanners p)) 1)
-                  (push (make-glissando 1 :start) (event-attachments event)))
-                 ((eq cmd :starttrillspan)
-                  (advance-token p)
-                  (when-let ((trill (spanner-state-trill (parser-spanners p))))
-                    (push (make-trill trill :stop) (event-attachments event)))
-                  (setf (spanner-state-trill (parser-spanners p)) 1)
-                  (push (make-trill 1 :start) (event-attachments event)))
-                 ((eq cmd :stoptrillspan)
-                  (advance-token p)
-                  (when-let ((trill (spanner-state-trill (parser-spanners p))))
-                    (push (make-trill trill :stop) (event-attachments event))
-                    (setf (spanner-state-trill (parser-spanners p)) nil)))
-                 ((eq cmd :arpeggio)
-                  (advance-token p)
-                  (push (make-arpeggio (spanner-state-arpeggio (parser-spanners p)))
-                        (event-attachments event))
-                  (setf (spanner-state-arpeggio (parser-spanners p)) nil))
-                 ((eq cmd :bendafter)
-                  (advance-token p)
-                  (parse-bend-args p event))
+                 (entry
+                  (funcall (cdr entry) p event cmd))
                  (t (return)))))
         ((:attach-dash :attach-up :attach-down)
          (advance-token p)
          (parse-attached-mark p event))
         (:slur-open
          (advance-token p)
-         (let ((number (1+ (length (spanner-state-slurs (parser-spanners p))))))
-           (push (cons nil number) (spanner-state-slurs (parser-spanners p)))
+         (let ((number (1+ (length (spanner p :slurs)))))
+           (push (cons nil number) (spanner p :slurs))
            (push (make-slur number :start) (event-attachments event))))
         (:slur-close
          (advance-token p)
-         (let ((spec (pop (spanner-state-slurs (parser-spanners p)))))
+         (let ((spec (pop (spanner p :slurs))))
            (when spec
              (push (make-slur (cdr spec) :stop) (event-attachments event)))))
         (:phrase-open
          (advance-token p)
-         (let ((number (1+ (length (spanner-state-slurs (parser-spanners p))))))
-           (push (cons t number) (spanner-state-slurs (parser-spanners p)))
+         (let ((number (1+ (length (spanner p :slurs)))))
+           (push (cons t number) (spanner p :slurs))
            (push (make-slur number :start t) (event-attachments event))))
         (:phrase-close
          (advance-token p)
-         (let ((spec (pop (spanner-state-slurs (parser-spanners p)))))
+         (let ((spec (pop (spanner p :slurs))))
            (when spec
              (push (make-slur (cdr spec) :stop t) (event-attachments event)))))
         (:wedge-start
          (advance-token p)
          (close-pending-wedge p event)
-         (setf (spanner-state-wedge (parser-spanners p)) (cons (token-value tok) 1))
+         (setf (spanner p :wedge) (cons (token-value tok) 1))
          (push (make-wedge 1 (token-value tok)) (event-attachments event)))
         (:wedge-stop
          (advance-token p)
