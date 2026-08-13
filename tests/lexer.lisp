@@ -51,6 +51,12 @@
   (testing "quoted strings"
     (let ((tokens (lilylink:tokenize "\\version \"2.26.0\"")))
       (ok (equal (lilylink::token-value (second tokens)) "2.26.0"))))
+  (testing "simultaneous music and voice separators"
+    (let ((tokens (lilylink:tokenize "<< { c4 } \\\\ { d4 } >>")))
+      (ok (equal (mapcar #'lilylink::token-type tokens)
+                 '(:simult-open :brace-open :pitch :brace-close
+                   :voice-separator :brace-open :pitch :brace-close
+                   :simult-close)))))
   (testing "articulation shorthands and direction prefixes"
     (let ((tokens (lilylink:tokenize "c4-. d^\\f e->")))
       (ok (equal (mapcar #'lilylink::token-type tokens)
