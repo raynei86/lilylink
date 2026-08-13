@@ -10,14 +10,25 @@
            #:lilylink-error
            #:lilylink-parse-error
            #:lilylink-emit-error
+           #:lilylink-warning
            #:parse-error-message
            #:parse-error-line
            #:parse-error-col
            #:parse-error-token
+           #:warning-message
+           #:warning-line
+           #:warning-col
+           #:*strict-mode*
            #:skip-event
            #:skip-command
            #:abort-parse))
 (in-package #:lilylink)
+
+;;; When NIL (default), recoverable problems warn and are skipped so a
+;;; conversion keeps going; when non-NIL they signal a parse error instead.
+(defvar *strict-mode* nil
+  "When non-NIL, recoverable problems signal LILYLINK-PARSE-ERROR rather
+than warning and continuing.")
 
 ;;; Root of the library's error hierarchy.  Subtypes: LILYLINK-PARSE-ERROR
 ;;; (bad input, carries the source location and offending token) and
@@ -41,11 +52,26 @@
              (format s "Lilylink conversion error: ~A"
                      (emit-error-message c)))))
 
+(define-condition lilylink-warning (warning)
+  ((message :initarg :message :reader warning-message)
+   (line :initarg :line :initform nil :reader warning-line)
+   (col :initarg :col :initform nil :reader warning-col))
+  (:report (lambda (c s)
+             (format s "LilyPond warning at line ~D, column ~D: ~A"
+                     (warning-line c) (warning-col c)
+                     (warning-message c)))))
+
 (defun signal-parse-error (line col token fmt &rest args)
   "Signal a LILYLINK-PARSE-ERROR at LINE/COL carrying TOKEN (or NIL)."
   (error 'lilylink-parse-error
          :message (apply #'format nil fmt args)
          :line line :col col :token token))
+
+(defun signal-warning (line col fmt &rest args)
+  "Signal a LILYLINK-WARNING at LINE/COL."
+  (warn 'lilylink-warning
+        :message (apply #'format nil fmt args)
+        :line line :col col))
 
 (defun emit-error (fmt &rest args)
   "Signal a LILYLINK-EMIT-ERROR (an internal invariant)."

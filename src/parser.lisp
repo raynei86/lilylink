@@ -105,6 +105,33 @@ consumed command token behind and passes NIL."
                                 +event-start-types+)))
         do (advance-token p)))
 
+(defun recover (p restart fmt &rest args)
+  "Handle a recoverable problem at the current token.  In strict mode
+(*strict-mode*) signal a parse error; otherwise warn and invoke RESTART
+(one of the SKIP-* recovery restarts), falling back to a plain resync.
+The warning carries the current token's location."
+  (let ((tok (peek-token p)))
+    (if *strict-mode*
+        (apply #'signal-parse-error (token-line-or-0 tok) (token-col-or-0 tok)
+               tok fmt args)
+        (progn
+          (apply #'signal-warning (token-line-or-0 tok) (token-col-or-0 tok)
+                 fmt args)
+          (if (find-restart restart)
+              (invoke-restart restart)
+              (resync-to-event-start p))))))
+
+(defun resync-command-args (p)
+  "Best-effort recovery for a consumed top-level \\command: skip bare
+note/word/argument tokens and one optional trailing braced block, stopping
+at the next top-level construct."
+  (loop while (and (peek-token p)
+                   (member (token-type (peek-token p))
+                           '(:pitch :rest :number :word :slash :string)))
+        do (advance-token p))
+  (when (and (peek-token p) (eq (token-type (peek-token p)) :brace-open))
+    (skip-braced-block p)))
+
 ;;; Push EVENT onto the accumulating list, record it as the parser's last event
 ;;; (used by \breathe), and return the updated list so callers can setf it.
 (defun accumulate-event (p events event)
@@ -178,7 +205,7 @@ duration (LOG . DOTS) or NIL, updating the parser's last-duration."
   (let ((tok (peek-token p)))
     (unless (and tok (eq (token-type tok) :command)
                  (lookup-mark (token-value tok)))
-      (parser-error p "Expected an expressive mark after the attachment prefix"))
+      (recover p 'skip-event "Expected an expressive mark after the attachment prefix"))
     (let* ((cmd (token-value tok))
            (spec (lookup-mark cmd)))
       (advance-token p)
@@ -249,7 +276,7 @@ duration (LOG . DOTS) or NIL, updating the parser's last-duration."
          (let* ((tok (advance-token p))
                 (spec (lookup-mark (token-value tok))))
            (unless spec
-             (parser-error p "Unknown articulation ~S" (token-value tok)))
+             (recover p 'skip-event "Unknown articulation ~S" (token-value tok)))
            (push (make-mark spec) (event-attachments event))))
         (:command
          (let* ((cmd (token-value tok))
@@ -351,7 +378,7 @@ duration (LOG . DOTS) or NIL, updating the parser's last-duration."
 (defun parse-duration-event (p ctx)
   (declare (ignore ctx))
   (unless (parser-last-pitch p)
-    (parser-error p "Duration with no preceding note"))
+    (recover p 'skip-event "Duration with no preceding note"))
   (let* ((tok (advance-token p))
          (val (token-value tok))
          (duration (setf (parser-last-duration p)
@@ -372,7 +399,7 @@ duration (LOG . DOTS) or NIL, updating the parser's last-duration."
       (let ((tok (peek-token p)))
         (when (or (null tok) (eq (token-type tok) :chord-close)) (return))
         (unless (eq (token-type tok) :pitch)
-          (parser-error p "Expected a pitch inside a chord"))
+          (recover p 'skip-event "Expected a pitch inside a chord"))
         (let* ((tok (advance-token p))
                (pitch (resolve-pitch-token p ctx (token-value tok)))
                (tie-stop-p (pitch-in-pending p pitch))
@@ -427,23 +454,20 @@ duration (LOG . DOTS) or NIL, updating the parser's last-duration."
          (mode-tok (expect-token p :command))
          (mode (token-value mode-tok)))
     (unless (member mode '(:major :minor))
-      (signal-parse-error (token-line mode-tok) (token-col mode-tok) mode-tok
-                          "Unsupported key mode \\~A" mode))
+      (recover p 'skip-command "Unsupported key mode \\~A" mode))
     (let ((pt (token-value pitch-tok)))
       (make-key-change (make-pitch (pitch-token-step pt)
                                    :alter (pitch-token-alter pt))
                        mode))))
 
-(defun parse-clef-octave-shift (suffix tok)
+(defun parse-clef-octave-shift (p suffix tok)
   ;; LilyPond clef octave marks: _8 -> -1, ^8 -> +1, _15 -> -2, etc.
   (when (and (plusp (length suffix)) (char= (char suffix 0) #\0))
-    (signal-parse-error (token-line tok) (token-col tok) tok
-                        "Invalid clef octave mark"))
+    (recover p 'skip-command "Invalid clef octave mark"))
   (let* ((n (parse-integer suffix :junk-allowed t))
          (k (when n (/ (1- n) 7))))
     (when (or (null k) (not (integerp k)))
-      (signal-parse-error (token-line tok) (token-col tok) tok
-                          "Unsupported clef octave mark"))
+      (recover p 'skip-command "Unsupported clef octave mark"))
     k))
 
 (defun parse-clef-args (p)
@@ -451,13 +475,13 @@ duration (LOG . DOTS) or NIL, updating the parser's last-duration."
          (name-str (cond
                      ((eq (token-type tok) :word) (token-value tok))
                      ((eq (token-type tok) :string) (token-value tok))
-                     (t (parser-error p "Expected a clef name"))))
+                     (t (recover p 'skip-command "Expected a clef name"))))
          (shift 0)
          (sep-pos (position-if (lambda (c) (member c '(#\_ #\^))) name-str)))
     (when sep-pos
       (let ((sign (char name-str sep-pos))
             (suffix (subseq name-str (1+ sep-pos))))
-        (setf shift (parse-clef-octave-shift suffix tok))
+        (setf shift (parse-clef-octave-shift p suffix tok))
         (when (char= sign #\_)
           (setf shift (- shift)))
         (setf name-str (subseq name-str 0 sep-pos))))
@@ -525,12 +549,13 @@ duration (LOG . DOTS) or NIL, updating the parser's last-duration."
       (:command
        (case (token-value tok)
          (:relative (advance-token p) (parse-relative p))
-         (t (parser-error p "Unsupported command \\~A in a voice" (token-value tok)))))
+         (t (recover p 'skip-command "Unsupported command \\~A in a voice"
+                     (token-value tok)))))
       (:pitch (list (parse-note-event p ctx)))
       (:rest (list (parse-rest-event p ctx)))
       (:chord-open (list (parse-chord p ctx)))
       (:number (list (parse-duration-event p ctx)))
-      (t (parser-error p "Expected a music expression in a voice")))))
+      (t (recover p 'skip-event "Expected a music expression in a voice")))))
 
 (defun parse-simultaneous (p ctx)
   "Parse << expr1 \\\\ expr2 ... >> into a flat list of voice-tagged events.
@@ -542,22 +567,23 @@ duration (LOG . DOTS) or NIL, updating the parser's last-duration."
          (let ((voices nil)
                (voice-number 1)
                (separator-seen nil))
-           (loop
-             (push (parse-voice-expression p ctx voice-number) voices)
-             (let ((tok (peek-token p)))
-               (when (null tok)
-                 (parser-error p "Unterminated simultaneous music"))
-               (case (token-type tok)
-                 (:voice-separator
-                  (advance-token p)
-                  (setf separator-seen t)
-                  (incf voice-number))
-                 (:simult-close
-                  (advance-token p)
-                  (return))
-                 (t (parser-error p "Expected \\\\ or >> in simultaneous music")))))
-           (unless separator-seen
-             (parser-error p "Simultaneous music without \\\\ (chord-forming << >>) is not supported"))
+            (loop
+              (push (parse-voice-expression p ctx voice-number) voices)
+              (let ((tok (peek-token p)))
+                (when (null tok)
+                  (parser-error p "Unterminated simultaneous music"))
+                (case (token-type tok)
+                  (:voice-separator
+                   (advance-token p)
+                   (setf separator-seen t)
+                   (incf voice-number))
+                  (:simult-close
+                   (advance-token p)
+                   (return))
+                  (t (recover p 'skip-event "Expected \\\\ or >> in simultaneous music")))))
+            (unless separator-seen
+              (recover p 'skip-command
+                       "Simultaneous music without \\\\ (chord-forming << >>) is not supported"))
            (apply #'nconc (nreverse voices)))
       (setf (parser-voice p) 1)
       (setf (parser-spanners p) saved-spanners)
@@ -590,7 +616,8 @@ duration (LOG . DOTS) or NIL, updating the parser's last-duration."
                  (:arpeggioarrowdown (setf (spanner-state-arpeggio (parser-spanners p)) :down))
                  (:arpeggionormal (setf (spanner-state-arpeggio (parser-spanners p)) nil))
                  (t (unless (member (token-value tok) +voice-style-commands+)
-                      (parser-error p "Unsupported command \\~A" (token-value tok))))))
+                      (recover p 'skip-command "Unsupported command \\~A"
+                               (token-value tok))))))
               (:simult-open
                (advance-token p)
                (setf events (nreconc (parse-simultaneous p ctx) events)))
@@ -603,7 +630,7 @@ duration (LOG . DOTS) or NIL, updating the parser's last-duration."
               (:rest (setf events (accumulate-event p events (parse-rest-event p ctx))))
               (:number (setf events (accumulate-event p events (parse-duration-event p ctx))))
               (:chord-open (setf events (accumulate-event p events (parse-chord p ctx))))
-              (t (parser-error p "Unexpected ~S" (token-type tok))))
+              (t (recover p 'skip-event "Unexpected ~S" (token-type tok))))
             (return))
         ;; Recovery: skip the offending construct and keep going.  SKIP-EVENT
         ;; must advance past the unconsumed bad token; SKIP-COMMAND leaves the
@@ -628,20 +655,25 @@ duration (LOG . DOTS) or NIL, updating the parser's last-duration."
        (:midi (skip-braced-block p) nil)
        (:relative (parse-relative p))
        (:score (parse-score p))
-       (t (parser-error p "Unsupported top-level command \\~A" (token-value tok)))))
+       (t (recover p 'skip-command "Unsupported top-level command \\~A"
+                   (token-value tok)))))
     (:brace-open
      (advance-token p)
      (prog1 (parse-events p nil)
        (expect-token p :brace-close)))
-    (t (parser-error p "Unexpected ~S at top level" (token-type tok)))))
+    (t (recover p 'skip-event "Unexpected ~S at top level" (token-type tok)))))
 
 (defun parse-file-events (p)
   (catch 'abort-parse
     (let ((events nil))
-      (loop
+      (loop do
         (restart-case
             (if-let ((tok (peek-token p)))
               (setf events (nreconc (parse-top-level-form p tok) events))
               (return (nreverse events)))
+          ;; Recovery: skip an unsupported top-level command and its args.
+          (skip-command () (resync-command-args p))
+          ;; Recovery: skip one unconsumed unexpected token.
+          (skip-event () (resync-to-event-start p t))
           ;; Recovery: stop parsing and hand back whatever was parsed so far.
           (abort-parse () (throw 'abort-parse (nreverse events))))))))

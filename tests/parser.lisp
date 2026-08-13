@@ -211,8 +211,10 @@
     (let ((events (lilylink:parse-music "\\relative c' { << { c4~ } \\\\ { c4 } >> }")))
       (ok (lilylink::note-tie-start-p (first events)))
       (ok (not (lilylink::note-tie-stop-p (second events))))))
-  (testing "simultaneous music without \\\\ is rejected"
-    (ok (handler-case (progn (lilylink:parse-music "\\relative c' { << { c4 d } >> }") nil)
+  (testing "simultaneous music without \\\\ is rejected in strict mode"
+    (ok (handler-case (progn (let ((lilylink:*strict-mode* t))
+                               (lilylink:parse-music "\\relative c' { << { c4 d } >> }"))
+                              nil)
           (lilylink:lilylink-parse-error () t)))))
 
 (defun measure-seq (src)
@@ -259,22 +261,44 @@
       (ok (= 2 (length (lilylink::staff-measures staff)))))))
 
 (deftest parse-errors
-  (testing "unsupported commands signal parse errors"
-    (ok (handler-case (progn (lilylink:parse-music "\\transpose c d { c }") nil)
+  (testing "unsupported commands are skipped by default"
+    (ok (handler-case (progn (lilylink:parse-music "\\transpose c d { c }") t)
+          (lilylink:lilylink-parse-error () nil))))
+  (testing "unsupported commands signal errors in strict mode"
+    (ok (handler-case (progn (let ((lilylink:*strict-mode* t))
+                               (lilylink:parse-music "\\transpose c d { c }"))
+                              nil)
           (lilylink:lilylink-parse-error () t))))
-  (testing "isolated duration without a preceding note is an error"
-    (ok (handler-case (progn (lilylink:parse-music "{ 4 }") nil)
+  (testing "isolated duration without a preceding note is skipped by default"
+    (ok (handler-case (progn (lilylink:parse-music "{ 4 }") t)
+          (lilylink:lilylink-parse-error () nil))))
+  (testing "isolated duration signals an error in strict mode"
+    (ok (handler-case (progn (let ((lilylink:*strict-mode* t))
+                               (lilylink:parse-music "{ 4 }"))
+                              nil)
           (lilylink:lilylink-parse-error () t))))
   (testing "durations beyond the supported maximum are rejected cleanly"
     (ok (handler-case (progn (lilylink:parse-music "{ c2048 }") nil)
           (lilylink:lilylink-parse-error () t))))
   (testing "format arguments are not double-wrapped in error messages"
-    (let ((msg (handler-case (lilylink:parse-music "{ \\transpose }")
+    (let ((msg (handler-case (let ((lilylink:*strict-mode* t))
+                               (lilylink:parse-music "{ \\transpose }"))
                  (lilylink:lilylink-parse-error (c)
                    (lilylink:parse-error-message c)))))
       (ok (equal msg "Unsupported command \\TRANSPOSE"))))
+  (testing "recoverable problems warn by default"
+    (let ((warnings nil))
+      (handler-bind
+          ((lilylink:lilylink-warning
+             (lambda (c) (push (lilylink:warning-message c) warnings)
+               (muffle-warning c))))
+        (lilylink:parse-music "{ c4 \\transpose d4 }"))
+      (ok (= 1 (length warnings)))
+      (ok (search "Unsupported command" (first warnings)))))
   (testing "parse errors are caught as lilylink-error"
-    (ok (handler-case (progn (lilylink:parse-music "{ \\transpose }") nil)
+    (ok (handler-case (progn (let ((lilylink:*strict-mode* t))
+                               (lilylink:parse-music "{ \\transpose }"))
+                              nil)
           (lilylink:lilylink-error () t))))
   (testing "emit errors are caught as lilylink-error"
     (ok (handler-case (lilylink::emit-error "Cannot emit event ~S" 'foo)
@@ -316,5 +340,7 @@
                     "{ c4 d4 e4 f4 g4 \\transpose }"))
            5)))
   (testing "without a handler the error still propagates"
-    (ok (handler-case (progn (lilylink:parse-music "{ \\transpose }") nil)
+    (ok (handler-case (progn (let ((lilylink:*strict-mode* t))
+                               (lilylink:parse-music "{ \\transpose }"))
+                              nil)
           (lilylink:lilylink-parse-error () t)))))
