@@ -13,6 +13,7 @@
   (last-pitch nil)
   (last-duration nil)
   (last-event nil)
+  (voice 1)
   (pending-ties nil)
   (pending-slurs nil)
   (pending-wedge nil)
@@ -96,7 +97,8 @@ duration (LOG . DOTS) or NIL, updating the parser's last-duration."
 
 (defun finish-note (p pitch duration tie-stop-p)
   "Build a NOTE, marking a pending-tie stop and consuming a trailing ~ as start."
-  (let ((note (make-instance 'note :pitch pitch :duration duration)))
+  (let ((note (make-instance 'note :pitch pitch :duration duration
+                             :voice (parser-voice p))))
     (when tie-stop-p
       (setf (note-tie-stop-p note) t))
     (when (consume-tie p)
@@ -253,7 +255,9 @@ duration (LOG . DOTS) or NIL, updating the parser's last-duration."
   (setf (parser-pending-trill p) nil)
   (let* ((tok (advance-token p))
          (duration (effective-duration p (token-value tok))))
-    (parse-post-events p (make-rest duration))))
+    (let ((rest (make-rest duration)))
+      (setf (rest-voice rest) (parser-voice p))
+      (parse-post-events p rest))))
 
 (defun parse-duration-event (p ctx)
   (declare (ignore ctx))
@@ -318,6 +322,9 @@ duration (LOG . DOTS) or NIL, updating the parser's last-duration."
                                 note)))
                            (nreverse entries))))
       (let ((chord (make-chord notes duration)))
+        (setf (chord-voice chord) (parser-voice p))
+        (dolist (n (chord-notes chord))
+          (setf (note-voice n) (parser-voice p)))
         (add-implicit-spanner-stops p chord)
         (parse-post-events p chord)))))
 
@@ -402,6 +409,85 @@ duration (LOG . DOTS) or NIL, updating the parser's last-duration."
     (expect-token p :brace-close)
     events))
 
+(defparameter +voice-style-commands+
+  '(:voiceone :voicetwo :voicethree :voicefour :onevoice
+    :voiceonestyle :voicetwostyle :voicethreestyle :voicefourstyle
+    :voiceneutralstyle))
+
+(defun consume-voice-style-commands (p)
+  "Consume and ignore \\voiceOne..\\oneVoice and style commands."
+  (loop while (and (peek-token p)
+                   (eq (token-type (peek-token p)) :command)
+                   (member (token-value (peek-token p)) +voice-style-commands+))
+        do (advance-token p)))
+
+(defun parse-voice-expression (p ctx voice-number)
+  "Parse one voice inside << >>, isolating spanners from other voices."
+  (setf (parser-voice p) voice-number)
+  (setf (parser-pending-ties p) nil)
+  (setf (parser-pending-slurs p) nil)
+  (setf (parser-pending-wedge p) nil)
+  (setf (parser-pending-glissando p) nil)
+  (setf (parser-pending-trill p) nil)
+  (setf (parser-last-pitch p) nil)
+  (setf (parser-last-duration p) nil)
+  (consume-voice-style-commands p)
+  (let ((tok (peek-token p)))
+    (case (token-type tok)
+      (:brace-open
+       (advance-token p)
+       (prog1 (parse-events p ctx)
+         (expect-token p :brace-close)))
+      (:command
+       (case (token-value tok)
+         (:relative (advance-token p) (parse-relative p))
+         (t (parser-error p "Unsupported command \\~A in a voice" (token-value tok)))))
+      (:pitch (list (parse-note-event p ctx)))
+      (:rest (list (parse-rest-event p ctx)))
+      (:chord-open (list (parse-chord p ctx)))
+      (:number (list (parse-duration-event p ctx)))
+      (t (parser-error p "Expected a music expression in a voice")))))
+
+(defun parse-simultaneous (p ctx)
+  "Parse << expr1 \\\\ expr2 ... >> into a flat list of voice-tagged events.
+<< has been consumed."
+  (let ((saved-ties (parser-pending-ties p))
+        (saved-slurs (parser-pending-slurs p))
+        (saved-wedge (parser-pending-wedge p))
+        (saved-glissando (parser-pending-glissando p))
+        (saved-trill (parser-pending-trill p))
+        (saved-pitch (parser-last-pitch p))
+        (saved-duration (parser-last-duration p)))
+    (unwind-protect
+         (let ((voices nil)
+               (voice-number 1)
+               (separator-seen nil))
+           (loop
+             (push (parse-voice-expression p ctx voice-number) voices)
+             (let ((tok (peek-token p)))
+               (when (null tok)
+                 (parser-error p "Unterminated simultaneous music"))
+               (case (token-type tok)
+                 (:voice-separator
+                  (advance-token p)
+                  (setf separator-seen t)
+                  (incf voice-number))
+                 (:simult-close
+                  (advance-token p)
+                  (return))
+                 (t (parser-error p "Expected \\\\ or >> in simultaneous music")))))
+           (unless separator-seen
+             (parser-error p "Simultaneous music without \\\\ (chord-forming << >>) is not supported"))
+           (apply #'nconc (nreverse voices)))
+      (setf (parser-voice p) 1)
+      (setf (parser-pending-ties p) saved-ties)
+      (setf (parser-pending-slurs p) saved-slurs)
+      (setf (parser-pending-wedge p) saved-wedge)
+      (setf (parser-pending-glissando p) saved-glissando)
+      (setf (parser-pending-trill p) saved-trill)
+      (setf (parser-last-pitch p) saved-pitch)
+      (setf (parser-last-duration p) saved-duration))))
+
 (defun parse-events (p ctx)
   (let ((events nil))
     (loop
@@ -426,7 +512,11 @@ duration (LOG . DOTS) or NIL, updating the parser's last-duration."
              (:arpeggioarrowup (setf (parser-arpeggio-direction p) :up))
              (:arpeggioarrowdown (setf (parser-arpeggio-direction p) :down))
              (:arpeggionormal (setf (parser-arpeggio-direction p) nil))
-             (t (parser-error p "Unsupported command \\~A" (token-value tok)))))
+             (t (unless (member (token-value tok) +voice-style-commands+)
+                  (parser-error p "Unsupported command \\~A" (token-value tok))))))
+          (:simult-open
+           (advance-token p)
+           (setf events (nreconc (parse-simultaneous p ctx) events)))
           (:brace-open
            (advance-token p)
            (prog1 (setf events (nreconc (parse-events p ctx) events))

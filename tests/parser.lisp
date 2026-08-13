@@ -186,6 +186,35 @@
            (marks (mapcar #'event-marks events)))
       (ok (equal marks '(("inverted-mordent") ("mordent") ("up-bow")))))))
 
+(defun voice-seq (src)
+  (mapcar (lambda (e)
+            (cond ((typep e 'lilylink::note)
+                   (format nil "~A/~D"
+                           (lilylink::pitch-step-letter
+                            (lilylink::pitch-step (lilylink::note-pitch e)))
+                           (lilylink::note-voice e)))
+                  ((typep e 'lilylink::rest-event) "r")
+                  (t (format nil "~S" (type-of e)))))
+          (lilylink:parse-music src)))
+
+(deftest parse-voices
+  (testing "two voices are tagged in order"
+    (ok (equal (voice-seq "\\relative c' { << { c4 d } \\\\ { e4 f } >> }")
+               '("c/1" "d/1" "e/2" "f/2"))))
+  (testing "three voices"
+    (ok (equal (voice-seq "\\relative c' { << { c4 } \\\\ { d4 } \\\\ { e4 } >> }")
+               '("c/1" "d/2" "e/3"))))
+  (testing "voice style commands are consumed and ignored"
+    (ok (equal (voice-seq "\\relative c' { << { \\voiceOne c4 } \\\\ { \\voiceTwo d4 } >> }")
+               '("c/1" "d/2"))))
+  (testing "spanners do not cross voices"
+    (let ((events (lilylink:parse-music "\\relative c' { << { c4~ } \\\\ { c4 } >> }")))
+      (ok (lilylink::note-tie-start-p (first events)))
+      (ok (not (lilylink::note-tie-stop-p (second events))))))
+  (testing "simultaneous music without \\\\ is rejected"
+    (ok (handler-case (progn (lilylink:parse-music "\\relative c' { << { c4 d } >> }") nil)
+          (lilylink:lilylink-parse-error () t)))))
+
 (deftest decompose-durations
   (testing "decompose-units produces dyadic-dotted pieces"
     (ok (equal (lilylink::decompose-units 6 4) '((2 . 1))))

@@ -14,16 +14,19 @@
    (duration :initarg :duration :accessor note-duration)
    (tie-start :initarg :tie-start :initform nil :accessor note-tie-start-p)
    (tie-stop :initarg :tie-stop :initform nil :accessor note-tie-stop-p)
-   (attachments :initform nil :accessor note-attachments)))
+   (attachments :initform nil :accessor note-attachments)
+   (voice :initarg :voice :initform 1 :accessor note-voice)))
 
 (defclass rest-event ()
   ((duration :initarg :duration :accessor rest-duration)
-   (attachments :initform nil :accessor rest-attachments)))
+   (attachments :initform nil :accessor rest-attachments)
+   (voice :initarg :voice :initform 1 :accessor rest-voice)))
 
 (defclass chord ()
   ((notes :initarg :notes :accessor chord-notes)
    (duration :initarg :duration :accessor chord-duration)
-   (attachments :initform nil :accessor chord-attachments)))
+   (attachments :initform nil :accessor chord-attachments)
+   (voice :initarg :voice :initform 1 :accessor chord-voice)))
 
 (defclass time-change ()
   ((beats :initarg :beats :accessor time-change-beats)
