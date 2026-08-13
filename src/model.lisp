@@ -15,30 +15,36 @@
    (tie-start :initarg :tie-start :initform nil :accessor note-tie-start-p)
    (tie-stop :initarg :tie-stop :initform nil :accessor note-tie-stop-p)
    (attachments :initform nil :accessor note-attachments)
-   (voice :initarg :voice :initform 1 :accessor note-voice)))
+   (voice :initarg :voice :initform 1 :accessor note-voice)
+   (staff :initarg :staff :initform 1 :accessor note-staff)))
 
 (defclass rest-event ()
   ((duration :initarg :duration :accessor rest-duration)
    (attachments :initform nil :accessor rest-attachments)
-   (voice :initarg :voice :initform 1 :accessor rest-voice)))
+   (voice :initarg :voice :initform 1 :accessor rest-voice)
+   (staff :initarg :staff :initform 1 :accessor rest-staff)))
 
 (defclass chord ()
   ((notes :initarg :notes :accessor chord-notes)
    (duration :initarg :duration :accessor chord-duration)
    (attachments :initform nil :accessor chord-attachments)
-   (voice :initarg :voice :initform 1 :accessor chord-voice)))
+   (voice :initarg :voice :initform 1 :accessor chord-voice)
+   (staff :initarg :staff :initform 1 :accessor chord-staff)))
 
 (defclass time-change ()
   ((beats :initarg :beats :accessor time-change-beats)
-   (beat-type :initarg :beat-type :accessor time-change-beat-type)))
+   (beat-type :initarg :beat-type :accessor time-change-beat-type)
+   (staff :initarg :staff :initform 1 :accessor time-change-staff)))
 
 (defclass key-change ()
   ((pitch :initarg :pitch :accessor key-change-pitch)
-   (mode :initarg :mode :accessor key-change-mode)))
+   (mode :initarg :mode :accessor key-change-mode)
+   (staff :initarg :staff :initform 1 :accessor key-change-staff)))
 
 (defclass clef-change ()
   ((clef :initarg :clef :accessor clef-change-clef)
-   (octave-shift :initarg :octave-shift :initform 0 :accessor clef-change-octave-shift)))
+   (octave-shift :initarg :octave-shift :initform 0 :accessor clef-change-octave-shift)
+   (staff :initarg :staff :initform 1 :accessor clef-change-staff)))
 
 ;;; A tempo marking (\tempo 4 = 120, \tempo "Allegro" 4 = 120, or text only).
 ;;; BEAT-UNIT is the note-value numerator (4 for quarter), PER-MINUTE the BPM;
@@ -46,10 +52,12 @@
 (defclass tempo-change ()
   ((text :initarg :text :initform nil :accessor tempo-text)
    (beat-unit :initarg :beat-unit :initform nil :accessor tempo-beat-unit)
-   (per-minute :initarg :per-minute :initform nil :accessor tempo-per-minute)))
+   (per-minute :initarg :per-minute :initform nil :accessor tempo-per-minute)
+   (staff :initarg :staff :initform 1 :accessor tempo-staff)))
 
 (defclass barline ()
-  ((voice :initarg :voice :initform 1 :accessor barline-voice)))
+  ((voice :initarg :voice :initform 1 :accessor barline-voice)
+   (staff :initarg :staff :initform 1 :accessor barline-staff)))
 
 ;;; An attached expressive mark (articulation, ornament, dynamic, technical,
 ;;; or fermata).  KIND selects the MusicXML container, TAG is the XML element
@@ -114,11 +122,11 @@
 (defun make-duration (log &key (dots 0))
   (make-instance 'duration :log log :dots dots))
 
-(defun make-rest (duration)
-  (make-instance 'rest-event :duration duration))
+(defun make-rest (duration &optional (staff 1))
+  (make-instance 'rest-event :duration duration :staff staff))
 
-(defun make-chord (notes duration)
-  (make-instance 'chord :notes notes :duration duration))
+(defun make-chord (notes duration &optional (staff 1))
+  (make-instance 'chord :notes notes :duration duration :staff staff))
 
 (defun make-mark (spec)
   "Build a MARK from a descriptor (KIND XML-TAG . PROPS); a :text prop is
@@ -160,21 +168,34 @@ moved into the mark's text slot."
 (defmethod event-attachments ((c chord)) (chord-attachments c))
 (defmethod (setf event-attachments) (v (c chord)) (setf (chord-attachments c) v))
 
-(defun make-time-change (beats beat-type)
-  (make-instance 'time-change :beats beats :beat-type beat-type))
+(defun event-staff-of (ev)
+  "The staff index an event belongs to (default 1)."
+  (typecase ev
+    (note (note-staff ev))
+    (rest-event (rest-staff ev))
+    (chord (chord-staff ev))
+    (barline (barline-staff ev))
+    (time-change (time-change-staff ev))
+    (key-change (key-change-staff ev))
+    (clef-change (clef-change-staff ev))
+    (tempo-change (tempo-staff ev))
+    (t 1)))
 
-(defun make-key-change (pitch mode)
-  (make-instance 'key-change :pitch pitch :mode mode))
+(defun make-time-change (beats beat-type &optional (staff 1))
+  (make-instance 'time-change :beats beats :beat-type beat-type :staff staff))
 
-(defun make-clef-change (clef octave-shift)
-  (make-instance 'clef-change :clef clef :octave-shift octave-shift))
+(defun make-key-change (pitch mode &optional (staff 1))
+  (make-instance 'key-change :pitch pitch :mode mode :staff staff))
 
-(defun make-barline (&optional (voice 1))
-  (make-instance 'barline :voice voice))
+(defun make-clef-change (clef octave-shift &optional (staff 1))
+  (make-instance 'clef-change :clef clef :octave-shift octave-shift :staff staff))
 
-(defun make-tempo-change (&key text beat-unit per-minute)
+(defun make-barline (&optional (voice 1) (staff 1))
+  (make-instance 'barline :voice voice :staff staff))
+
+(defun make-tempo-change (&key text beat-unit per-minute (staff 1))
   (make-instance 'tempo-change :text text :beat-unit beat-unit
-                 :per-minute per-minute))
+                 :per-minute per-minute :staff staff))
 
 (defparameter +pitch-step-letters+ "cdefgab")
 

@@ -289,18 +289,23 @@
                (emit-event s ev divisions))))
   (write-string "</measure>" s))
 
-(defun emit-part (s staff)
-  (write-string "<part id=\"P1\">" s)
+(defun emit-part (s staff id)
+  (format s "<part id=\"P~D\">" id)
   (dolist (m (staff-measures staff))
     (emit-measure s m (staff-divisions staff)))
   (write-string "</part>" s))
 
 (defun emit-score (s score)
-  (let ((*emit-voice* (score-polyphonic-p score)))
+  (let ((*emit-voice* (score-polyphonic-p score))
+        (staves (score-staves score)))
     (write-string "<score-partwise version=\"3.1\">" s)
-    (write-string "<part-list><score-part id=\"P1\"><part-name>Music</part-name>"
-                  s)
-    (write-string "</score-part></part-list>" s)
-    (let ((staff (first (score-staves score))))
-      (emit-part s staff))
+    (write-string "<part-list>" s)
+    (loop for staff in staves
+          for id from 1
+          do (format s "<score-part id=\"P~D\"><part-name>Music</part-name></score-part>"
+                     id))
+    (write-string "</part-list>" s)
+    (loop for staff in staves
+          for id from 1
+          do (emit-part s staff id))
     (write-string "</score-partwise>" s)))

@@ -227,6 +227,28 @@
     (let ((xml (lilylink:convert-string "\\relative c' { c4 d }")))
       (ok (not (search "<voice>" xml))))))
 
+(deftest convert-pianostaff
+  (testing "two staves emit two parts"
+    (let ((xml (lilylink:convert-string "\\new PianoStaff <<
+  \\new Staff \\relative c' { \\clef treble c4 d }
+  \\new Staff \\relative c { \\clef bass c4 d }
+>>")))
+      (ok (search "<part-list><score-part id=\"P1\">" xml))
+      (ok (search "<score-part id=\"P2\">" xml))
+      (ok (search "<part id=\"P1\">" xml))
+      (ok (search "<part id=\"P2\">" xml))))
+  (testing "each staff keeps its own clef"
+    (let ((xml (lilylink:convert-string "\\new PianoStaff <<
+  \\new Staff \\relative c' { \\clef treble c4 d }
+  \\new Staff \\relative c { \\clef bass c4 d }
+>>")))
+      (ok (search "<clef><sign>G</sign><line>2</line></clef>" xml))
+      (ok (search "<clef><sign>F</sign><line>4</line></clef>" xml))))
+  (testing "a single \\new Staff yields one part"
+    (let ((xml (lilylink:convert-string "\\new Staff \\relative c' { c4 d }")))
+      (ok (search "<score-part id=\"P1\">" xml))
+      (ok (not (search "<score-part id=\"P2\">" xml))))))
+
 (deftest convert-error-cases
   (testing "an unknown clef is an emit error, not a parse error"
     (ok (handler-case (progn (lilylink:convert-string "{ \\clef foo c4 }") nil)
@@ -258,4 +280,15 @@
   (testing "a recoverable problem is skipped end-to-end"
     (let ((xml (lilylink:convert-string "{ c4 \\transpose }")))
       (ok (search "<step>C</step>" xml))
-      (ok (not (search "<step>D</step>" xml))))))
+      (ok (not (search "<step>D</step>" xml)))))
+  (testing "a full piano score round-trips with tempo, dynamics and articulations"
+    (let ((xml (lilylink:convert-string "\\new PianoStaff <<
+  \\new Staff \\relative c' { \\key g \\major \\time 4/4 \\tempo \"Allegro\" 4 = 120 c4\\mf d\\staccato e\\tenuto f | g1 }
+  \\new Staff \\relative c { \\clef bass c4 d e f | g1 }
+>>")))
+      (ok (search "<score-part id=\"P2\">" xml))
+      (ok (search "<sound tempo=\"120\"/>" xml))
+      (ok (search "<dynamics><mf/></dynamics>" xml))
+      (ok (search "<articulations><staccato/></articulations>" xml))
+      (ok (search "<articulations><tenuto/></articulations>" xml))
+      (ok (search "<clef><sign>F</sign><line>4</line></clef>" xml)))))

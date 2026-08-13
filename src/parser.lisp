@@ -26,6 +26,8 @@
   (last-duration nil)
   (last-event nil)
   (voice 1)
+  (staff 1)
+  (max-staff 0)
   (spanners (make-spanner-state)))
 
 (defun reset-spanner-state (p)
@@ -190,7 +192,7 @@ duration (LOG . DOTS) or NIL, updating the parser's last-duration."
 (defun finish-note (p pitch duration tie-stop-p)
   "Build a NOTE, marking a pending-tie stop and consuming a trailing ~ as start."
   (let ((note (make-instance 'note :pitch pitch :duration duration
-                             :voice (parser-voice p))))
+                             :voice (parser-voice p) :staff (parser-staff p))))
     (when tie-stop-p
       (setf (note-tie-stop-p note) t))
     (when (consume-tie p)
@@ -371,7 +373,7 @@ duration (LOG . DOTS) or NIL, updating the parser's last-duration."
   (reset-spanner-state p)
   (let* ((tok (advance-token p))
          (duration (effective-duration p (token-value tok))))
-    (let ((rest (make-rest duration)))
+    (let ((rest (make-rest duration (parser-staff p))))
       (setf (rest-voice rest) (parser-voice p))
       (parse-post-events p rest))))
 
@@ -425,17 +427,18 @@ duration (LOG . DOTS) or NIL, updating the parser's last-duration."
     (let* ((chord-tie-p (consume-tie p))
            (duration (or (parser-last-duration p) (make-duration 2)))
            (notes (mapcar (lambda (entry)
-                            (destructuring-bind (pitch tie-stop-p tie-start-p) entry
-                              (let ((note (make-instance 'note :pitch pitch
-                                                          :duration duration)))
-                                (when tie-stop-p
-                                  (setf (note-tie-stop-p note) t))
-                                (when (or tie-start-p chord-tie-p)
-                                  (setf (note-tie-start-p note) t)
-                                  (push (pitch-key pitch) (spanner-state-ties (parser-spanners p))))
-                                note)))
-                           (nreverse entries))))
-      (let ((chord (make-chord notes duration)))
+                             (destructuring-bind (pitch tie-stop-p tie-start-p) entry
+                               (let ((note (make-instance 'note :pitch pitch
+                                                           :duration duration
+                                                           :staff (parser-staff p))))
+                                 (when tie-stop-p
+                                   (setf (note-tie-stop-p note) t))
+                                 (when (or tie-start-p chord-tie-p)
+                                   (setf (note-tie-start-p note) t)
+                                   (push (pitch-key pitch) (spanner-state-ties (parser-spanners p))))
+                                 note)))
+                            (nreverse entries))))
+      (let ((chord (make-chord notes duration (parser-staff p))))
         (setf (chord-voice chord) (parser-voice p))
         (dolist (n (chord-notes chord))
           (setf (note-voice n) (parser-voice p)))
@@ -447,7 +450,8 @@ duration (LOG . DOTS) or NIL, updating the parser's last-duration."
         (s (expect-token p :slash))
         (b (expect-token p :number)))
     (declare (ignore s))
-    (make-time-change (car (token-value a)) (car (token-value b)))))
+    (make-time-change (car (token-value a)) (car (token-value b))
+                      (parser-staff p))))
 
 ;;; \tempo has been consumed.  Accept "\tempo 4 = 120", "\tempo "Allegro" 4 =
 ;;; 120", or "\tempo "Allegro"" (text only).
@@ -462,7 +466,8 @@ duration (LOG . DOTS) or NIL, updating the parser's last-duration."
       (when (and (peek-token p) (eq (token-type (peek-token p)) :equals))
         (advance-token p)
         (setf per-minute (car (token-value (expect-token p :number))))))
-    (make-tempo-change :text text :beat-unit beat-unit :per-minute per-minute)))
+    (make-tempo-change :text text :beat-unit beat-unit :per-minute per-minute
+                       :staff (parser-staff p))))
 
 (defun parse-key-args (p)
   (let* ((pitch-tok (expect-token p :pitch))
@@ -473,7 +478,7 @@ duration (LOG . DOTS) or NIL, updating the parser's last-duration."
     (let ((pt (token-value pitch-tok)))
       (make-key-change (make-pitch (pitch-token-step pt)
                                    :alter (pitch-token-alter pt))
-                       mode))))
+                       mode (parser-staff p)))))
 
 (defun parse-clef-octave-shift (p suffix)
   ;; LilyPond clef octave marks: _8 -> -1, ^8 -> +1, _15 -> -2, etc.
@@ -500,7 +505,8 @@ duration (LOG . DOTS) or NIL, updating the parser's last-duration."
         (when (char= sign #\_)
           (setf shift (- shift)))
         (setf name-str (subseq name-str 0 sep-pos))))
-    (make-clef-change (intern (string-upcase name-str) "KEYWORD") shift)))
+    (make-clef-change (intern (string-upcase name-str) "KEYWORD") shift
+                      (parser-staff p))))
 
 (defun skip-braced-block (p)
   (expect-token p :brace-open)
@@ -548,6 +554,51 @@ duration (LOG . DOTS) or NIL, updating the parser's last-duration."
                    (member (token-value (peek-token p)) +voice-style-commands+))
         do (advance-token p)))
 
+;;; \new has been consumed.  Parse a context: Staff, PianoStaff, or Voice
+;;; (each a bare capitalized word), with an optional `= "id"`.  Returns the
+;;; parsed events.
+(defun parse-new-command (p ctx)
+  (let ((type-tok (peek-token p)))
+    (unless (and type-tok (eq (token-type type-tok) :word))
+      (parser-error p "Expected a context name after \\new"))
+    (let ((type (intern (string-upcase (token-value type-tok)) "KEYWORD")))
+      (advance-token p)
+      ;; Skip an optional `= "id"`.
+      (when (and (peek-token p) (eq (token-type (peek-token p)) :equals))
+        (advance-token p)
+        (when (and (peek-token p) (eq (token-type (peek-token p)) :string))
+          (advance-token p)))
+      (case type
+        (:staff
+         (let ((old-staff (parser-staff p)))
+           (incf (parser-max-staff p))
+           (setf (parser-staff p) (parser-max-staff p))
+           (unwind-protect
+                (parse-context-body p ctx)
+             (setf (parser-staff p) old-staff))))
+        (:pianostaff
+         (expect-token p :simult-open)
+         (parse-simultaneous p ctx))
+        (:voice
+         (parse-context-body p ctx))
+        (t (recover p 'skip-command "Unsupported \\new context \\~A" type))))))
+
+;;; Parse the music body of a \new Staff / \new Voice context: either a braced
+;;; block, or a \relative block.
+(defun parse-context-body (p ctx)
+  (let ((tok (peek-token p)))
+    (case (token-type tok)
+      (:brace-open
+       (advance-token p)
+       (prog1 (parse-events p ctx)
+         (expect-token p :brace-close)))
+      (:command
+       (case (token-value tok)
+         (:relative (advance-token p) (parse-relative p))
+         (t (recover p 'skip-command "Unsupported command \\~A in a context"
+                     (token-value tok)))))
+      (t (recover p 'skip-event "Expected music after \\new")))))
+
 (defun parse-voice-expression (p ctx voice-number)
   "Parse one voice inside << >>, isolating spanners from other voices."
   (setf (parser-voice p) voice-number)
@@ -573,17 +624,20 @@ duration (LOG . DOTS) or NIL, updating the parser's last-duration."
       (t (recover p 'skip-event "Expected a music expression in a voice")))))
 
 (defun parse-simultaneous (p ctx)
-  "Parse << expr1 \\\\ expr2 ... >> into a flat list of voice-tagged events.
-<< has been consumed."
+  "Parse << expr1 \\\\ expr2 ... >> into a flat list of voice/staff-tagged
+events.  << has been consumed.  Entries are either voice expressions
+separated by \\\\, or \\new Staff / \\new PianoStaff contexts (which each
+carry their own staff index)."
   (let ((saved-spanners (copy-spanner-state (parser-spanners p)))
         (saved-pitch (parser-last-pitch p))
-        (saved-duration (parser-last-duration p)))
+        (saved-duration (parser-last-duration p))
+        (saved-voice (parser-voice p)))
     (unwind-protect
          (let ((voices nil)
                (voice-number 1)
                (separator-seen nil))
             (loop
-              (push (parse-voice-expression p ctx voice-number) voices)
+              (push (parse-simultaneous-entry p ctx voice-number) voices)
               (let ((tok (peek-token p)))
                 (when (null tok)
                   (parser-error p "Unterminated simultaneous music"))
@@ -595,15 +649,35 @@ duration (LOG . DOTS) or NIL, updating the parser's last-duration."
                   (:simult-close
                    (advance-token p)
                    (return))
-                  (t (recover p 'skip-event "Expected \\\\ or >> in simultaneous music")))))
-            (unless separator-seen
+                  (t (unless (and (eq (token-type tok) :command)
+                                  (eq (token-value tok) :new))
+                       (recover p 'skip-event
+                                "Expected \\\\ or >> in simultaneous music"))))))
+            ;; Chord-forming << {a} {b} >> (no \\, no \new) is unsupported.
+            (unless (or separator-seen
+                        (some (lambda (entry)
+                                (and (consp entry) (eq (car entry) :new)))
+                              voices))
               (recover p 'skip-command
                        "Simultaneous music without \\\\ (chord-forming << >>) is not supported"))
-           (apply #'nconc (nreverse voices)))
-      (setf (parser-voice p) 1)
+            (apply #'nconc
+                   (mapcar (lambda (entry) (cdr entry))
+                           (nreverse voices))))
+      (setf (parser-voice p) saved-voice)
       (setf (parser-spanners p) saved-spanners)
       (setf (parser-last-pitch p) saved-pitch)
       (setf (parser-last-duration p) saved-duration))))
+
+;;; Parse one entry inside << >>: either a \\new context (returned as
+;;; (:new . events)) or a voice expression on the current staff (returned as
+;;; (:voice . events)), so the caller can tell staves apart.
+(defun parse-simultaneous-entry (p ctx voice-number)
+  (let ((tok (peek-token p)))
+    (cond ((and tok (eq (token-type tok) :command)
+                (eq (token-value tok) :new))
+           (advance-token p)
+           (cons :new (parse-new-command p ctx)))
+          (t (cons :voice (parse-voice-expression p ctx voice-number))))))
 
 (defun parse-events (p ctx)
   (let ((events nil))
@@ -620,6 +694,7 @@ duration (LOG . DOTS) or NIL, updating the parser's last-duration."
                  (:key (push (parse-key-args p) events))
                  (:clef (push (parse-clef-args p) events))
                  (:tempo (push (parse-tempo-args p) events))
+                 (:new (setf events (nreconc (parse-new-command p ctx) events)))
                  (:header (skip-braced-block p))
                  (:layout (skip-braced-block p))
                  (:paper (skip-braced-block p))
@@ -641,7 +716,7 @@ duration (LOG . DOTS) or NIL, updating the parser's last-duration."
                (advance-token p)
                (prog1 (setf events (nreconc (parse-events p ctx) events))
                  (expect-token p :brace-close)))
-              (:barline (advance-token p) (push (make-barline (parser-voice p)) events))
+              (:barline (advance-token p) (push (make-barline (parser-voice p) (parser-staff p)) events))
               (:pitch (setf events (accumulate-event p events (parse-note-event p ctx))))
               (:rest (setf events (accumulate-event p events (parse-rest-event p ctx))))
               (:number (setf events (accumulate-event p events (parse-duration-event p ctx))))
@@ -671,6 +746,7 @@ duration (LOG . DOTS) or NIL, updating the parser's last-duration."
        (:midi (skip-braced-block p) nil)
        (:relative (parse-relative p))
        (:score (parse-score p))
+       (:new (parse-new-command p nil))
        (t (recover p 'skip-command "Unsupported top-level command \\~A"
                    (token-value tok)))))
     (:brace-open

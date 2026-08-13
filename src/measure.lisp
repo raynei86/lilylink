@@ -1,10 +1,10 @@
 (in-package #:lilylink)
 
 ;;; Convert a flat list of events (notes, rests, chords, and command
-;;; objects) into a SCORE object with a single staff, splitting events into
-;;; measures according to the time signature and bar checks.  Notes, rests,
-;;; and chords that would overflow a measure are split at the barline into
-;;; tied dyadic-dotted pieces.
+;;; objects) into a SCORE object with one staff per staff index, splitting
+;;; events into measures according to the time signature and bar checks.
+;;; Notes, rests, and chords that would overflow a measure are split at the
+;;; barline into tied dyadic-dotted pieces.
 
 (defun step-semitone (step)
   (aref #(0 2 4 5 7 9 11) step))
@@ -43,15 +43,24 @@ measure length integral in division units (i.e. 4*2^log divisible by each
         (tempo-change nil)
         (barline nil)))))
 
-(defun build-score (events)
-  (let* ((divisions (let ((log (scan-divisions-log events)))
-                      (if (zerop log) 4 (expt 2 log))))
-         (staff (make-instance 'staff))
-         (measure-hash (make-hash-table))
-         (measures nil)                    ; ordered, in creation order
-         (measure-cap (measure-units 4 4 divisions))
-         (attrs-dirty t)
-         (cursors (make-hash-table)))      ; voice -> (measure-number . accumulated)
+(defun group-by-staff (events)
+  "Partition EVENTS by their staff index, returning ((staff . events) ...)
+ordered by staff number."
+  (let ((table (make-hash-table)))
+    (dolist (ev events)
+      (push ev (gethash (event-staff-of ev) table)))
+    (sort (loop for staff being the hash-keys of table
+                collect (cons staff (nreverse (gethash staff table))))
+          #'< :key #'car)))
+
+;;; Build one STAFF object from EVENTS, which must all carry STAFF-INDEX.
+(defun build-staff (events staff-index divisions)
+  (let ((staff (make-instance 'staff))
+        (measure-hash (make-hash-table))
+        (measures nil)                    ; ordered, in creation order
+        (measure-cap (measure-units 4 4 divisions))
+        (attrs-dirty t)
+        (cursors (make-hash-table)))      ; voice -> (measure-number . accumulated)
     (labels
         ((voice-cursor (voice)
            (or (gethash voice cursors)
@@ -102,7 +111,7 @@ measure length integral in division units (i.e. 4*2^log divisible by each
          ;; FIRST-ATTS go on the first piece, LAST-ATTS (spanner stops) on the
          ;; last.
          (place-note-pieces (pitch pieces first-p last-p src-start src-stop
-                                  first-atts last-atts voice)
+                                   first-atts last-atts voice)
            (let ((np (length pieces)))
              (loop for piece in pieces
                    for j from 0
@@ -111,7 +120,7 @@ measure length integral in division units (i.e. 4*2^log divisible by each
                                (has-next (not (and last-p (= (1+ j) np))))
                                (dur (make-duration log :dots dots))
                                (note (make-instance 'note :pitch pitch :duration dur
-                                                    :voice voice)))
+                                                    :voice voice :staff staff-index)))
                           (when (or has-prev (and first-p (zerop j) src-stop))
                             (setf (note-tie-stop-p note) t))
                           (when (or has-next (and last-p (= (1+ j) np) src-start))
@@ -157,7 +166,7 @@ measure length integral in division units (i.e. 4*2^log divisible by each
                        do (dolist (piece (decompose-units chunk divisions))
                             (destructuring-bind (log . dots) piece
                               (let* ((dur (make-duration log :dots dots))
-                                     (r (make-rest dur)))
+                                     (r (make-rest dur staff-index)))
                                 (setf (rest-voice r) voice)
                                 (push-event r dur voice))))
                           (unless (= (1+ i) (length chunks))
@@ -187,7 +196,8 @@ measure length integral in division units (i.e. 4*2^log divisible by each
                                                             (let ((sub (make-instance 'note
                                                                                       :pitch (note-pitch n)
                                                                                       :duration dur
-                                                                                      :voice voice)))
+                                                                                      :voice voice
+                                                                                      :staff staff-index)))
                                                               (when (or has-prev
                                                                         (and (zerop i) (note-tie-stop-p n)))
                                                                 (setf (note-tie-stop-p sub) t))
@@ -197,7 +207,7 @@ measure length integral in division units (i.e. 4*2^log divisible by each
                                                                 (setf (note-tie-start-p sub) t))
                                                               sub))
                                                           notes)))
-                                           (let ((sub-chord (make-chord sub-notes dur)))
+                                           (let ((sub-chord (make-chord sub-notes dur staff-index)))
                                              (setf (chord-voice sub-chord) voice)
                                              ;; Marks go on the first split chord; spanner
                                              ;; stops on the last.
@@ -247,4 +257,15 @@ measure length integral in division units (i.e. 4*2^log divisible by each
         (setf (measure-events m) (nreverse (measure-events m))))
       (setf (staff-measures staff) measures)
       (setf (staff-divisions staff) divisions)
-      (make-instance 'score :staves (list staff)))))
+      staff)))
+
+(defun build-score (events)
+  (let* ((divisions (let ((log (scan-divisions-log events)))
+                      (if (zerop log) 4 (expt 2 log))))
+         (groups (group-by-staff events))
+         (staves (if (null groups)
+                     (list (build-staff nil 1 divisions))
+                     (mapcar (lambda (group)
+                               (build-staff (cdr group) (car group) divisions))
+                             groups))))
+    (make-instance 'score :staves staves)))
