@@ -272,4 +272,15 @@
     (let ((msg (handler-case (lilylink:parse-music "{ \\transpose }")
                  (lilylink:lilylink-parse-error (c)
                    (lilylink:parse-error-message c)))))
-      (ok (equal msg "Unsupported command \\TRANSPOSE")))))
+      (ok (equal msg "Unsupported command \\TRANSPOSE"))))
+  (testing "parse errors are caught as lilylink-error"
+    (ok (handler-case (progn (lilylink:parse-music "{ \\transpose }") nil)
+          (lilylink:lilylink-error () t))))
+  (testing "emit errors are caught as lilylink-error"
+    (ok (handler-case (lilylink::emit-error "Cannot emit event ~S" 'foo)
+          (lilylink:lilylink-error () t))))
+  (testing "emit errors are not parse errors"
+    (ok (eq (handler-case (lilylink::emit-error "boom")
+              (lilylink:lilylink-parse-error () :parse)
+              (lilylink:lilylink-error () :generic))
+            :generic))))

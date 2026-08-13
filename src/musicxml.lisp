@@ -46,7 +46,7 @@
 
 (defun duration-type-name (log)
   (unless (< log (length +duration-type-names+))
-    (error "Cannot emit a note of duration log2 ~D" log))
+    (emit-error "Cannot emit a note of duration log2 ~D" log))
   (aref +duration-type-names+ log))
 
 (defun duration-in-divisions (duration divisions)
@@ -215,7 +215,7 @@
     (chord
      (emit-chord s ev divisions)
      (emit-wedges s ev))
-    (t (error "Cannot emit event ~S" ev))))
+    (t (emit-error "Cannot emit event ~S" ev))))
 
 ;;; Hairpins are <direction> elements, siblings of <note>, so they are emitted
 ;;; after the note (or chord) they attach to.
@@ -229,7 +229,7 @@
 (defun clef-sign-line (clef)
   (let ((entry (assoc clef +clef-signs+)))
     (when (null entry)
-      (error "Unknown clef ~S" clef))
+      (emit-error "Unknown clef ~S" clef))
     (destructuring-bind (sign line) (cdr entry)
       (values sign line))))
 

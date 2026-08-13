@@ -76,14 +76,15 @@
 (defun expect-token (p type)
   (let ((tok (advance-token p)))
     (unless (and tok (eq (token-type tok) type))
-      (lilylink-error-at (token-line-or-0 tok) (token-col-or-0 tok)
-                         "Expected ~S but found ~S" type
-                         (if tok (token-type tok) 'eof)))
+      (signal-parse-error (token-line-or-0 tok) (token-col-or-0 tok) tok
+                          "Expected ~S but found ~S" type
+                          (if tok (token-type tok) 'eof)))
     tok))
 
 (defun parser-error (p fmt &rest args)
   (let ((tok (peek-token p)))
-    (apply #'lilylink-error-at (token-line-or-0 tok) (token-col-or-0 tok) fmt args)))
+    (apply #'signal-parse-error (token-line-or-0 tok) (token-col-or-0 tok)
+           tok fmt args)))
 
 ;;; Push EVENT onto the accumulating list, record it as the parser's last event
 ;;; (used by \breathe), and return the updated list so callers can setf it.
@@ -407,8 +408,8 @@ duration (LOG . DOTS) or NIL, updating the parser's last-duration."
          (mode-tok (expect-token p :command))
          (mode (token-value mode-tok)))
     (unless (member mode '(:major :minor))
-      (lilylink-error-at (token-line mode-tok) (token-col mode-tok)
-                         "Unsupported key mode \\~A" mode))
+      (signal-parse-error (token-line mode-tok) (token-col mode-tok) mode-tok
+                          "Unsupported key mode \\~A" mode))
     (let ((pt (token-value pitch-tok)))
       (make-key-change (make-pitch (pitch-token-step pt)
                                    :alter (pitch-token-alter pt))
@@ -417,13 +418,13 @@ duration (LOG . DOTS) or NIL, updating the parser's last-duration."
 (defun parse-clef-octave-shift (suffix tok)
   ;; LilyPond clef octave marks: _8 -> -1, ^8 -> +1, _15 -> -2, etc.
   (when (and (plusp (length suffix)) (char= (char suffix 0) #\0))
-    (lilylink-error-at (token-line tok) (token-col tok)
-                       "Invalid clef octave mark"))
+    (signal-parse-error (token-line tok) (token-col tok) tok
+                        "Invalid clef octave mark"))
   (let* ((n (parse-integer suffix :junk-allowed t))
          (k (when n (/ (1- n) 7))))
     (when (or (null k) (not (integerp k)))
-      (lilylink-error-at (token-line tok) (token-col tok)
-                         "Unsupported clef octave mark"))
+      (signal-parse-error (token-line tok) (token-col tok) tok
+                          "Unsupported clef octave mark"))
     k))
 
 (defun parse-clef-args (p)

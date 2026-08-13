@@ -12,9 +12,7 @@
   duration)
 
 (defun lilylink-error-at (line col fmt &rest args)
-  (error 'lilylink-parse-error
-         :message (apply #'format nil fmt args)
-         :line line :col col))
+  (apply #'signal-parse-error line col nil fmt args))
 
 (defun duration-log-from-num (num)
   "Log2 of NUM, which must be a positive power of two no longer than

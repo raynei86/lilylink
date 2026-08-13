@@ -44,7 +44,7 @@ Returns (values log dots piece-units)."
                             best-log (- k d)
                             best-dots d)))
     (when (zerop best-units)
-      (error "Cannot represent ~D division units as a note value" units))
+      (emit-error "Cannot represent ~D division units as a note value" units))
     (values best-log best-dots best-units)))
 
 (defun decompose-units (units divisions)
