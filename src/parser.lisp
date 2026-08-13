@@ -85,6 +85,12 @@
   (let ((tok (peek-token p)))
     (lilylink-error-at (token-line-or-0 tok) (token-col-or-0 tok) fmt args)))
 
+;;; Push EVENT onto the accumulating list, record it as the parser's last event
+;;; (used by \breathe), and return the updated list so callers can setf it.
+(defun accumulate-event (p events event)
+  (setf (parser-last-event p) event)
+  (cons event events))
+
 ;;; Relative octave placement: choose the octave that minimizes the
 ;;; diatonic interval (ignoring accidentals) between the target step and
 ;;; the reference pitch.
@@ -571,20 +577,12 @@ duration (LOG . DOTS) or NIL, updating the parser's last-duration."
            (advance-token p)
            (prog1 (setf events (nreconc (parse-events p ctx) events))
              (expect-token p :brace-close)))
-          (:barline (advance-token p) (push (make-barline (parser-voice p)) events))
-          (:pitch (let ((note (parse-note-event p ctx)))
-                    (setf (parser-last-event p) note)
-                    (push note events)))
-          (:rest (let ((rest (parse-rest-event p ctx)))
-                   (setf (parser-last-event p) rest)
-                   (push rest events)))
-          (:number (let ((note (parse-duration-event p ctx)))
-                     (setf (parser-last-event p) note)
-                     (push note events)))
-          (:chord-open (let ((chord (parse-chord p ctx)))
-                         (setf (parser-last-event p) chord)
-                         (push chord events)))
-          (t (parser-error p "Unexpected ~S" (token-type tok))))
+           (:barline (advance-token p) (push (make-barline (parser-voice p)) events))
+           (:pitch (setf events (accumulate-event p events (parse-note-event p ctx))))
+           (:rest (setf events (accumulate-event p events (parse-rest-event p ctx))))
+           (:number (setf events (accumulate-event p events (parse-duration-event p ctx))))
+           (:chord-open (setf events (accumulate-event p events (parse-chord p ctx))))
+           (t (parser-error p "Unexpected ~S" (token-type tok))))
         (return)))
     (nreverse events)))
 
