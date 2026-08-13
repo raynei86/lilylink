@@ -27,6 +27,25 @@
     (ok (equal (key-xml "e" "minor") '("1" "minor")))
     (ok (equal (key-xml "d" "minor") '("-1" "minor")))))
 
+(deftest convert-tempo
+  (testing "metronome tempo emits beat-unit, per-minute and sound"
+    (let ((xml (lilylink:convert-string "\\relative c' { \\tempo 4 = 120 c4 }")))
+      (ok (search "<direction placement=\"above\">" xml))
+      (ok (search "<metronome><beat-unit>quarter</beat-unit><per-minute>120</per-minute></metronome>" xml))
+      (ok (search "<sound tempo=\"120\"/>" xml))))
+  (testing "tempo with text adds a words element"
+    (let ((xml (lilylink:convert-string "\\relative c' { \\tempo \"Allegro\" 4 = 120 c4 }")))
+      (ok (search "<words>Allegro</words>" xml))
+      (ok (search "<sound tempo=\"120\"/>" xml))))
+  (testing "a text-only tempo has no metronome or sound"
+    (let ((xml (lilylink:convert-string "\\relative c' { \\tempo \"Andante\" c4 }")))
+      (ok (search "<words>Andante</words>" xml))
+      (ok (not (search "<metronome>" xml)))
+      (ok (not (search "<sound" xml)))))
+  (testing "tempo appears before the notes of its measure"
+    (let ((xml (lilylink:convert-string "\\relative c' { \\tempo 4 = 96 c4 d }")))
+      (ok (search "<sound tempo=\"96\"/></direction><note>" xml)))))
+
 (deftest convert-basic-melody
   (testing "single staff score structure"
     (let ((xml (lilylink:convert-string "\\relative c' { c4 d e f | g2 a | b1 }")))

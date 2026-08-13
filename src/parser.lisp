@@ -449,6 +449,21 @@ duration (LOG . DOTS) or NIL, updating the parser's last-duration."
     (declare (ignore s))
     (make-time-change (car (token-value a)) (car (token-value b)))))
 
+;;; \tempo has been consumed.  Accept "\tempo 4 = 120", "\tempo "Allegro" 4 =
+;;; 120", or "\tempo "Allegro"" (text only).
+(defun parse-tempo-args (p)
+  (let ((text nil)
+        (beat-unit nil)
+        (per-minute nil))
+    (when (and (peek-token p) (eq (token-type (peek-token p)) :string))
+      (setf text (token-value (advance-token p))))
+    (when (and (peek-token p) (eq (token-type (peek-token p)) :number))
+      (setf beat-unit (car (token-value (advance-token p))))
+      (when (and (peek-token p) (eq (token-type (peek-token p)) :equals))
+        (advance-token p)
+        (setf per-minute (car (token-value (expect-token p :number))))))
+    (make-tempo-change :text text :beat-unit beat-unit :per-minute per-minute)))
+
 (defun parse-key-args (p)
   (let* ((pitch-tok (expect-token p :pitch))
          (mode-tok (expect-token p :command))
@@ -460,7 +475,7 @@ duration (LOG . DOTS) or NIL, updating the parser's last-duration."
                                    :alter (pitch-token-alter pt))
                        mode))))
 
-(defun parse-clef-octave-shift (p suffix tok)
+(defun parse-clef-octave-shift (p suffix)
   ;; LilyPond clef octave marks: _8 -> -1, ^8 -> +1, _15 -> -2, etc.
   (when (and (plusp (length suffix)) (char= (char suffix 0) #\0))
     (recover p 'skip-command "Invalid clef octave mark"))
@@ -481,7 +496,7 @@ duration (LOG . DOTS) or NIL, updating the parser's last-duration."
     (when sep-pos
       (let ((sign (char name-str sep-pos))
             (suffix (subseq name-str (1+ sep-pos))))
-        (setf shift (parse-clef-octave-shift p suffix tok))
+        (setf shift (parse-clef-octave-shift p suffix))
         (when (char= sign #\_)
           (setf shift (- shift)))
         (setf name-str (subseq name-str 0 sep-pos))))
@@ -604,6 +619,7 @@ duration (LOG . DOTS) or NIL, updating the parser's last-duration."
                  (:time (push (parse-time-args p) events))
                  (:key (push (parse-key-args p) events))
                  (:clef (push (parse-clef-args p) events))
+                 (:tempo (push (parse-tempo-args p) events))
                  (:header (skip-braced-block p))
                  (:layout (skip-braced-block p))
                  (:paper (skip-braced-block p))

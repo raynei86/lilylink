@@ -40,6 +40,14 @@
   ((clef :initarg :clef :accessor clef-change-clef)
    (octave-shift :initarg :octave-shift :initform 0 :accessor clef-change-octave-shift)))
 
+;;; A tempo marking (\tempo 4 = 120, \tempo "Allegro" 4 = 120, or text only).
+;;; BEAT-UNIT is the note-value numerator (4 for quarter), PER-MINUTE the BPM;
+;;; either can be NIL for text-only marks.
+(defclass tempo-change ()
+  ((text :initarg :text :initform nil :accessor tempo-text)
+   (beat-unit :initarg :beat-unit :initform nil :accessor tempo-beat-unit)
+   (per-minute :initarg :per-minute :initform nil :accessor tempo-per-minute)))
+
 (defclass barline ()
   ((voice :initarg :voice :initform 1 :accessor barline-voice)))
 
@@ -163,6 +171,10 @@ moved into the mark's text slot."
 
 (defun make-barline (&optional (voice 1))
   (make-instance 'barline :voice voice))
+
+(defun make-tempo-change (&key text beat-unit per-minute)
+  (make-instance 'tempo-change :text text :beat-unit beat-unit
+                 :per-minute per-minute))
 
 (defparameter +pitch-step-letters+ "cdefgab")
 

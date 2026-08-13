@@ -207,6 +207,7 @@
             ((char= c #\|) (consume) (push-tok :barline nil))
             ((char= c #\/) (consume) (push-tok :slash nil))
             ((char= c #\~) (consume) (push-tok :tie nil))
+            ((char= c #\=) (consume) (push-tok :equals nil))
             ((char= c #\-) (scan-dash))
             ((char= c #\^) (consume) (push-tok :attach-up nil))
             ((char= c #\_) (consume) (push-tok :attach-down nil))

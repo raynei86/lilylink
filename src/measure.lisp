@@ -40,6 +40,7 @@ measure length integral in division units (i.e. 4*2^log divisible by each
                                (duration-dots (chord-duration ev))))))
         (key-change nil)
         (clef-change nil)
+        (tempo-change nil)
         (barline nil)))))
 
 (defun build-score (events)
@@ -81,6 +82,12 @@ measure length integral in division units (i.e. 4*2^log divisible by each
                   (m (ensure-measure (car cursor))))
              (push ev (measure-events m))
              (incf (cdr cursor) (duration-units duration divisions))))
+
+         ;; A staff-wide direction (e.g. tempo) belongs at the head of the
+         ;; current measure of voice 1, without advancing any voice cursor.
+         (place-direction (ev)
+           (push ev (measure-events (ensure-measure
+                                     (car (voice-cursor 1))))))
 
          (advance-voice (voice)
            (let ((cursor (voice-cursor voice)))
@@ -227,6 +234,7 @@ measure length integral in division units (i.e. 4*2^log divisible by each
           (barline
            (when (plusp (cdr (voice-cursor (barline-voice ev))))
              (advance-voice (barline-voice ev))))
+          (tempo-change (place-direction ev))
           (note (place-note ev (note-voice ev)))
           (rest-event (place-rest ev (rest-voice ev)))
           (chord (place-chord ev (chord-voice ev))))

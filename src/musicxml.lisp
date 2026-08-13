@@ -249,13 +249,36 @@
         (format s "<octave-change>~D</octave-change>" octave-shift))
       (write-string "</clef></attributes>" s))))
 
+;;; A tempo marking is a <direction> with an optional <words>, <metronome>,
+;;; and <sound tempo>.
+(defun emit-tempo (s ev)
+  (write-string "<direction placement=\"above\"><direction-type>" s)
+  (when (tempo-text ev)
+    (format s "<words>~A</words>" (tempo-text ev)))
+  (when (tempo-beat-unit ev)
+    (format s "<metronome><beat-unit>~A</beat-unit>"
+            (duration-type-name (duration-log-from-num (tempo-beat-unit ev))))
+    (when (tempo-per-minute ev)
+      (format s "<per-minute>~D</per-minute>" (tempo-per-minute ev)))
+    (write-string "</metronome>" s))
+  (write-string "</direction-type>" s)
+  (when (tempo-per-minute ev)
+    (format s "<sound tempo=\"~D\"/>" (tempo-per-minute ev)))
+  (write-string "</direction>" s))
+
 (defun emit-measure (s measure divisions)
   (format s "<measure number=\"~D\">" (measure-number measure))
   (when (measure-attributes measure)
     (emit-attributes s (measure-attr-data measure) divisions))
-  (let* ((groups (group-by-voice (measure-events measure)))
+  (let* ((events (measure-events measure))
+         ;; Directions (tempo) are emitted before the voice-grouped notes.
+         (directions (remove-if-not (lambda (ev) (typep ev 'tempo-change)) events))
+         (musical (remove-if (lambda (ev) (typep ev 'tempo-change)) events))
+         (groups (group-by-voice musical))
          (totals (mapcar (lambda (group) (voice-total (cdr group) divisions))
                          groups)))
+    (dolist (ev directions)
+      (emit-tempo s ev))
     (loop for group in groups
           for total in totals
           for i from 0
