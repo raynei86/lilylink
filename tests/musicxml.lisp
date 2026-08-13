@@ -168,11 +168,10 @@
 
 (deftest convert-file-roundtrip
   (testing "convert-file reads a .ly file"
-    (let ((path (uiop:with-temporary-file (:pathname p :keep t :type "ly")
-                  (with-open-file (s p :direction :output :if-exists :overwrite)
-                    (write-string "\\relative c' { c4 d }" s))
-                  p)))
-      (let ((xml (lilylink:convert-file path)))
+    (uiop:with-temporary-file (:pathname p :type "ly")
+      (with-open-file (s p :direction :output :if-exists :overwrite)
+        (write-string "\\relative c' { c4 d }" s))
+      (let ((xml (lilylink:convert-file p)))
         (ok (search "<score-partwise" xml)))))
   (testing "empty music defaults to a valid score"
     (let ((xml (lilylink:convert-string "{ }")))
