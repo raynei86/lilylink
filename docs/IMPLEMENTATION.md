@@ -179,6 +179,9 @@ no runtime dependency on LilyPond.
   `<line>`, optional `<octave-change>`).
 - Notes: `<pitch>` (`<step>`, optional `<alter>`, `<octave>`), `<duration>`,
   `<type>`, optional `<dot/>`. Rests: `<note><rest/>…`. Chords: `<chord/>`.
+- Polyphonic scores: each note carries `<voice>N</voice>` (after `<tie>`,
+  before `<type>`) and voices are emitted block-per-voice with `<backup>`
+  rewinds between them.
 - `divisions` is computed globally as `2 ^ max(log + dots)` over all
   durations (raised as needed so every measure length is also integral in
   division units), so every `<duration>` and every measure boundary is an
@@ -260,9 +263,16 @@ chapters:
 
 ### Simultaneous notes (ch. 5)
 
-- Multiple voices: `<< … >>` (parses as chord brackets and will not behave
-  like parallel music) and `\\` (errors).
-- Clusters, `\partcombine`.
+- Multiple voices: `<< { v1 } \\ { v2 } [\\ { v3 } …] >>` on a single staff.
+  Each expression becomes an implicit voice `1, 2, …`; events are tagged with
+  a voice number and laid out into the same measure numbers, then emitted
+  block-per-voice with `<voice>N</voice>` and `<backup>` rewinds. `\voiceOne`
+  … `\oneVoice` and style commands are consumed and ignored (the voice number
+  distinguishes voices); spanners do not cross voices.
+- Deferred: the chord-forming `<< {a} {b} >>` construct (no `\\`, which would
+  merge identical rhythms into chords), `\new Voice`, `\new Staff` /
+  multi-staff, `\partcombine`, `\voices`, and collision merging. `|` bar
+  checks advance only their own voice and are expected to align.
 
 ### Staff notation (ch. 6)
 
@@ -317,8 +327,10 @@ These are places where behavior is deliberately lenient or lossy:
   duration decomposition, barline auto-splitting (notes, chords, rests),
   expressive marks (articulations, ornaments, dynamics, technical, slurs,
   phrasing slurs, hairpins, glissando, trill spans, arpeggio, breath, bends),
-  error signaling, and MusicXML emission (structure, attributes, dotted notes,
-  rests, chords, tie and mark markers, `\score` wrappers, file round-trip).
+  voices (`<< \\ >>` parsing, voice tagging, spanner isolation, shared-measure
+  layout, `<voice>`/`<backup>` emission), error signaling, and MusicXML
+  emission (structure, attributes, dotted notes, rests, chords, tie and mark
+  markers, `\score` wrappers, file round-trip).
 - Relative-octave behavior was cross-validated against the real `lilypond`
   binary (via `\displayMusic` and MIDI output), including the counterintuitive
   chord-octave-mark results and the "nested `\relative` leaves the enclosing
@@ -326,9 +338,8 @@ These are places where behavior is deliberately lenient or lossy:
 
 ## Roadmap (suggested order)
 
-1. Slurs `( )`, articulations, ornaments, and dynamics.
-2. Polyphony / voices (`<< >>`, `\\`) and `\voiceOne` … `\voiceFour`.
-3. Multiple staves and staff groups.
-4. `\chordmode` and lyrics.
-6. `\transpose` and quarter-tone accidentals.
-7. Header metadata into MusicXML `<work>` / `<creator>`.
+1. Multiple staves and staff groups (`\new Staff`, `\new PianoStaff`).
+2. `\new Voice`/`\partcombine`, and the chord-forming `<< {a} {b} >>`.
+3. `\chordmode` and lyrics.
+4. `\transpose` and quarter-tone accidentals.
+5. Header metadata into MusicXML `<work>` / `<creator>`.
