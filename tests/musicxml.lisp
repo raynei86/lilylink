@@ -56,7 +56,17 @@
     (let ((xml (lilylink:convert-string "\\relative c'' { \\time 3/4 fis4 g a | bes2. | \\clef bass e,4 f g | }")))
       (ok (search "<measure number=\"1\"><attributes>" xml))
       (ok (search "<measure number=\"2\"><note>" xml))
-      (ok (search "<measure number=\"3\"><attributes><divisions>4</divisions><key><fifths>0</fifths><mode>major</mode></key><time><beats>3</beats><beat-type>4</beat-type></time><clef><sign>F</sign><line>4</line></clef></attributes>" xml)))))
+      (ok (search "<measure number=\"3\"><attributes><divisions>4</divisions><key><fifths>0</fifths><mode>major</mode></key><time><beats>3</beats><beat-type>4</beat-type></time><clef><sign>F</sign><line>4</line></clef></attributes>" xml))))
+  (testing "accidentals emit an alter element"
+    (let ((xml (lilylink:convert-string "\\relative c' { cis4 }")))
+      (ok (search "<alter>1</alter>" xml)))
+    (let ((xml (lilylink:convert-string "\\relative c' { bes4 }")))
+      (ok (search "<alter>-1</alter>" xml))))
+  (testing "clef octave shifts emit an octave-change element"
+    (let ((xml (lilylink:convert-string "{ \\clef \"treble^8\" c4 }")))
+      (ok (search "<octave-change>1</octave-change>" xml)))
+    (let ((xml (lilylink:convert-string "{ \\clef \"bass_8\" c4 }")))
+      (ok (search "<octave-change>-1</octave-change>" xml)))))
 
 (deftest convert-dotted-and-rests
   (testing "dotted notes and rests"
@@ -140,7 +150,12 @@
   (testing "mordents map by name"
     (let ((xml (lilylink:convert-string "\\relative c' { c4\\mordent d\\prall }")))
       (ok (search "<inverted-mordent/>" xml))
-      (ok (search "<mordent/>" xml)))))
+      (ok (search "<mordent/>" xml))))
+  (testing "other-* marks carry their text content"
+    (let ((xml (lilylink:convert-string "\\relative c' { c4\\espressivo }")))
+      (ok (search "<other-articulation>espressivo</other-articulation>" xml)))
+    (let ((xml (lilylink:convert-string "\\relative c' { c4\\sff }")))
+      (ok (search "<other-dynamics>sff</other-dynamics>" xml)))))
 
 (deftest convert-slurs-and-hairpins
   (testing "slurs emit as notations"
@@ -193,6 +208,19 @@
     (let ((xml (lilylink:convert-string "\\relative c' { c4 d }")))
       (ok (not (search "<voice>" xml))))))
 
+(deftest convert-error-cases
+  (testing "an unknown clef is an emit error, not a parse error"
+    (ok (handler-case (progn (lilylink:convert-string "{ \\clef foo c4 }") nil)
+          (lilylink:lilylink-emit-error () t)
+          (lilylink:lilylink-parse-error () nil))))
+  (testing "an unknown clef is caught as lilylink-error"
+    (ok (handler-case (progn (lilylink:convert-string "{ \\clef foo c4 }") nil)
+          (lilylink:lilylink-error () t))))
+  (testing "empty input produces a valid empty score"
+    (let ((xml (lilylink:convert-string "")))
+      (ok (search "<score-partwise" xml))
+      (ok (search "<part id=\"P1\">" xml)))))
+
 (deftest convert-file-roundtrip
   (testing "convert-file reads a .ly file"
     (uiop:with-temporary-file (:pathname p :type "ly")
@@ -203,4 +231,12 @@
   (testing "empty music defaults to a valid score"
     (let ((xml (lilylink:convert-string "{ }")))
       (ok (search "<score-partwise" xml))
-      (ok (search "<part id=\"P1\">" xml)))))
+      (ok (search "<part id=\"P1\">" xml))))
+  (testing "top-level version, paper and midi wrappers are handled"
+    (let ((xml (lilylink:convert-string "\\version \"2.26.0\" \\paper { } \\midi { } \\relative c' { c4 }")))
+      (ok (search "<score-partwise" xml))
+      (ok (search "<step>C</step>" xml))))
+  (testing "a recoverable problem is skipped end-to-end"
+    (let ((xml (lilylink:convert-string "{ c4 \\transpose }")))
+      (ok (search "<step>C</step>" xml))
+      (ok (not (search "<step>D</step>" xml))))))

@@ -280,6 +280,14 @@
   (testing "durations beyond the supported maximum are rejected cleanly"
     (ok (handler-case (progn (lilylink:parse-music "{ c2048 }") nil)
           (lilylink:lilylink-parse-error () t))))
+  (testing "the longest supported duration is accepted"
+    (ok (handler-case (progn (lilylink:parse-music "{ c1024 }") t)
+          (lilylink:lilylink-parse-error () nil))))
+  (testing "non-power-of-two durations are rejected"
+    (ok (handler-case (progn (lilylink:parse-music "{ c3 }") nil)
+          (lilylink:lilylink-parse-error () t)))
+    (ok (handler-case (progn (lilylink:parse-music "{ c5 }") nil)
+          (lilylink:lilylink-parse-error () t))))
   (testing "format arguments are not double-wrapped in error messages"
     (let ((msg (handler-case (let ((lilylink:*strict-mode* t))
                                (lilylink:parse-music "{ \\transpose }"))
@@ -290,11 +298,11 @@
     (let ((warnings nil))
       (handler-bind
           ((lilylink:lilylink-warning
-             (lambda (c) (push (lilylink:warning-message c) warnings)
-               (muffle-warning c))))
+             (lambda (c) (push c warnings) (muffle-warning c))))
         (lilylink:parse-music "{ c4 \\transpose d4 }"))
       (ok (= 1 (length warnings)))
-      (ok (search "Unsupported command" (first warnings)))))
+      (ok (search "Unsupported command" (lilylink:warning-message (first warnings))))
+      (ok (not (null (lilylink:warning-line (first warnings)))))))
   (testing "parse errors are caught as lilylink-error"
     (ok (handler-case (progn (let ((lilylink:*strict-mode* t))
                                (lilylink:parse-music "{ \\transpose }"))
