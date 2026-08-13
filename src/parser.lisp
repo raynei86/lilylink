@@ -71,6 +71,11 @@ CTX is a REL-CTX or NIL (absolute mode)."
     (setf (parser-last-pitch p) pitch)
     pitch))
 
+(defun resolve-pitch-token (p ctx pt)
+  "Resolve the PITCH-TOKEN PT against CTX into a PITCH object."
+  (resolve-pitch p ctx (pitch-token-step pt) (pitch-token-alter pt)
+                 (pitch-token-octave-mark pt)))
+
 (defun effective-duration (p tok-dur)
   "Return the effective duration for a note/rest given an explicit token
 duration (LOG . DOTS) or NIL, updating the parser's last-duration."
@@ -238,14 +243,15 @@ duration (LOG . DOTS) or NIL, updating the parser's last-duration."
           (event-attachments event))))
 
 (defun parse-note-event (p ctx)
-  (let* ((tok (advance-token p)))
-    (destructuring-bind (step alter mark duration) (token-value tok)
-      (let* ((pitch (resolve-pitch p ctx step alter mark))
-             (tie-stop-p (pitch-in-pending p pitch)))
-        (setf (parser-pending-ties p) nil)
-        (let ((note (finish-note p pitch (effective-duration p duration) tie-stop-p)))
-          (add-implicit-spanner-stops p note)
-          (parse-post-events p note))))))
+  (let* ((tok (advance-token p))
+         (pt (token-value tok))
+         (pitch (resolve-pitch-token p ctx pt))
+         (tie-stop-p (pitch-in-pending p pitch)))
+    (setf (parser-pending-ties p) nil)
+    (let ((note (finish-note p pitch (effective-duration p (pitch-token-duration pt))
+                             tie-stop-p)))
+      (add-implicit-spanner-stops p note)
+      (parse-post-events p note))))
 
 (defun parse-rest-event (p ctx)
   (declare (ignore ctx))
@@ -285,9 +291,7 @@ duration (LOG . DOTS) or NIL, updating the parser's last-duration."
         (unless (eq (token-type tok) :pitch)
           (parser-error p "Expected a pitch inside a chord"))
         (let* ((tok (advance-token p))
-               (pitch (destructuring-bind (step alter mark duration) (token-value tok)
-                        (declare (ignore duration))
-                        (resolve-pitch p ctx step alter mark)))
+               (pitch (resolve-pitch-token p ctx (token-value tok)))
                (tie-stop-p (pitch-in-pending p pitch))
                (tie-start-p (consume-tie p)))
           (unless first-pitch (setf first-pitch pitch))
@@ -342,9 +346,10 @@ duration (LOG . DOTS) or NIL, updating the parser's last-duration."
     (unless (member mode '(:major :minor))
       (lilylink-error-at (token-line mode-tok) (token-col mode-tok)
                          "Unsupported key mode \\~A" mode))
-    (destructuring-bind (step alter mark duration) (token-value pitch-tok)
-      (declare (ignore mark duration))
-      (make-key-change (make-pitch step :alter alter) mode))))
+    (let ((pt (token-value pitch-tok)))
+      (make-key-change (make-pitch (pitch-token-step pt)
+                                   :alter (pitch-token-alter pt))
+                       mode))))
 
 (defun parse-clef-octave-shift (suffix tok)
   ;; LilyPond clef octave marks: _8 -> -1, ^8 -> +1, _15 -> -2, etc.
@@ -396,11 +401,11 @@ duration (LOG . DOTS) or NIL, updating the parser's last-duration."
   ;; \relative has been consumed
   (let ((tok (peek-token p)))
     (if (and tok (eq (token-type tok) :pitch))
-        (destructuring-bind (step alter mark duration) (token-value (advance-token p))
-          (declare (ignore duration))
+        (let ((pt (token-value (advance-token p))))
           (parse-relative-block p
-                                (make-rel-ctx (make-pitch step :alter alter
-                                                          :octave (+ 3 mark)))))
+                                (make-rel-ctx (make-pitch (pitch-token-step pt)
+                                                          :alter (pitch-token-alter pt)
+                                                          :octave (+ 3 (pitch-token-octave-mark pt))))))
         (parse-relative-block p (make-rel-ctx :unset)))))
 
 (defun parse-score (p)

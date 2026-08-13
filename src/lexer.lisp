@@ -2,6 +2,15 @@
 
 (defstruct token type value line col)
 
+;;; A pitch token's value: STEP is a diatonic index 0..6 (c=0), ALTER the
+;;; accidental (-2..2), OCTAVE-MARK the net ' / , count, and DURATION an
+;;; adjacent (LOG . DOTS) note value or NIL.
+(defstruct (pitch-token (:constructor make-pitch-token (step alter octave-mark duration)))
+  step
+  alter
+  octave-mark
+  duration)
+
 (defun lilylink-error-at (line col fmt &rest args)
   (error 'lilylink-parse-error
          :message (apply #'format nil fmt args)
@@ -122,8 +131,8 @@
                             (loop while (and (peekc) (member (peekc) '(#\! #\?)))
                                   do (consume))
                             (push-tok :pitch
-                                      (list step alter mark
-                                            (scan-duration-parts))))
+                                      (make-pitch-token step alter mark
+                                                        (scan-duration-parts))))
                           (push-tok :word run)))))))
              (scan-word (run)
                (push-tok :word run))
