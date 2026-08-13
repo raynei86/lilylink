@@ -13,7 +13,10 @@
            #:parse-error-message
            #:parse-error-line
            #:parse-error-col
-           #:parse-error-token))
+           #:parse-error-token
+           #:skip-event
+           #:skip-command
+           #:abort-parse))
 (in-package #:lilylink)
 
 ;;; Root of the library's error hierarchy.  Subtypes: LILYLINK-PARSE-ERROR

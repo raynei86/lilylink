@@ -284,3 +284,37 @@
               (lilylink:lilylink-parse-error () :parse)
               (lilylink:lilylink-error () :generic))
             :generic))))
+
+(defun skip-restart-test (restart src)
+  (handler-bind
+      ((lilylink:lilylink-parse-error
+         (lambda (c)
+           (declare (ignore c))
+           (when (find-restart restart)
+             (invoke-restart restart)))))
+    (lilylink:parse-music src)))
+
+(defun events->pitch-strings (events)
+  (mapcar #'pitch-string events))
+
+(deftest recovery-restarts
+  (testing "skip-command recovers past an unsupported command"
+    (ok (equal (events->pitch-strings
+                (skip-restart-test
+                 'lilylink:skip-command
+                 "{ c4 \\transpose d4 e4 f4 }"))
+               '("c3" "d3" "e3" "f3"))))
+  (testing "skip-event skips an isolated duration with no preceding note"
+    (ok (equal (events->pitch-strings
+                (skip-restart-test
+                 'lilylink:skip-event
+                 "{ r4 4 }"))
+               '("r"))))
+  (testing "abort-parse returns the events parsed so far"
+    (ok (= (length (skip-restart-test
+                    'lilylink:abort-parse
+                    "{ c4 d4 e4 f4 g4 \\transpose }"))
+           5)))
+  (testing "without a handler the error still propagates"
+    (ok (handler-case (progn (lilylink:parse-music "{ \\transpose }") nil)
+          (lilylink:lilylink-parse-error () t)))))
