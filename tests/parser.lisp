@@ -215,6 +215,34 @@
     (ok (handler-case (progn (lilylink:parse-music "\\relative c' { << { c4 d } >> }") nil)
           (lilylink:lilylink-parse-error () t)))))
 
+(defun measure-seq (src)
+  (let* ((score (lilylink:build-score (lilylink:parse-music src)))
+         (staff (first (lilylink::score-staves score))))
+    (mapcar (lambda (m)
+              (mapcar (lambda (e)
+                        (cond ((typep e 'lilylink::note)
+                               (format nil "~A~D/~D"
+                                       (lilylink::pitch-step-letter
+                                        (lilylink::pitch-step (lilylink::note-pitch e)))
+                                       (lilylink::pitch-octave (lilylink::note-pitch e))
+                                       (lilylink::note-voice e)))
+                              ((typep e 'lilylink::rest-event)
+                               (format nil "r/~D" (lilylink::rest-voice e)))
+                              (t "?")))
+                      (lilylink::measure-events m)))
+            (lilylink::staff-measures staff))))
+
+(deftest build-voices-measures
+  (testing "two voices share a measure, grouped by voice"
+    (ok (equal (measure-seq "\\relative c' { << { c4 d e f } \\\\ { g2 a2 } >> }")
+               '(("c4/1" "d4/1" "e4/1" "f4/1" "g4/2" "a4/2")))))
+  (testing "voices continue after the simultaneous block"
+    (ok (equal (measure-seq "\\relative c' { << { c1 } \\\\ { e1 } >> c1 }")
+               '(("c4/1" "e4/2") ("c4/1")))))
+  (testing "cross-barline split happens per voice"
+    (ok (equal (measure-seq "\\relative c' { \\time 3/4 << { c2 c4 } \\\\ { e2. } >> }")
+               '(("c4/1" "c4/1" "e4/2"))))))
+
 (deftest decompose-durations
   (testing "decompose-units produces dyadic-dotted pieces"
     (ok (equal (lilylink::decompose-units 6 4) '((2 . 1))))

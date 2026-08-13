@@ -46,56 +46,56 @@ measure length integral in division units (i.e. 4*2^log divisible by each
   (let* ((divisions (let ((log (scan-divisions-log events)))
                       (if (zerop log) 4 (expt 2 log))))
          (staff (make-instance 'staff))
-         (measures nil)
-         (measure-num 1)
-         (current nil)
-         (accumulated 0)                    ; division units
+         (measure-hash (make-hash-table))
+         (measures nil)                    ; ordered, in creation order
          (measure-cap (measure-units 4 4 divisions))
-         (attrs-dirty t))
+         (attrs-dirty t)
+         (cursors (make-hash-table)))      ; voice -> (measure-number . accumulated)
     (labels
-        ((open-measure ()
-           (setf current (make-instance 'measure :number measure-num
-                                        :attributes attrs-dirty))
-           (when attrs-dirty (snapshot-attrs))
-           (setf attrs-dirty nil))
+        ((voice-cursor (voice)
+           (or (gethash voice cursors)
+               (setf (gethash voice cursors) (cons 1 0))))
 
-         (snapshot-attrs ()
-           (setf (measure-attr-data current)
-                 (list :clef (staff-clef staff)
-                       :clef-octave-shift (staff-clef-octave-shift staff)
-                       :key-fifths (staff-key-fifths staff)
-                       :key-mode (staff-key-mode staff)
-                       :time-beats (staff-time-beats staff)
-                       :time-beat-type (staff-time-beat-type staff))))
-
-         (close-measure ()
-           (when (and current (measure-events current))
-             (setf (measure-events current) (nreverse (measure-events current)))
-             (push current measures))
-           (setf current nil)
-           (incf measure-num))
+         (ensure-measure (n)
+           "Create or reuse measure N, snapshoting attributes on first use."
+           (or (gethash n measure-hash)
+               (let ((m (make-instance 'measure :number n :attributes attrs-dirty)))
+                 (when attrs-dirty
+                   (setf (measure-attr-data m)
+                         (list :clef (staff-clef staff)
+                               :clef-octave-shift (staff-clef-octave-shift staff)
+                               :key-fifths (staff-key-fifths staff)
+                               :key-mode (staff-key-mode staff)
+                               :time-beats (staff-time-beats staff)
+                               :time-beat-type (staff-time-beat-type staff)))
+                   (setf attrs-dirty nil))
+                 (setf (gethash n measure-hash) m)
+                 (setf measures (append measures (list m)))
+                 m)))
 
          (mark-attrs ()
-           (setf attrs-dirty t)
-           (when (and current (null (measure-events current)))
-             (setf (measure-attributes current) t)
-             (snapshot-attrs)
-             (setf attrs-dirty nil)))
+           (setf attrs-dirty t))
 
-         (push-event (ev duration)
-           (push ev (measure-events current))
-           (incf accumulated (duration-units duration divisions)))
+         (push-event (ev duration voice)
+           (let* ((cursor (voice-cursor voice))
+                  (m (ensure-measure (car cursor))))
+             (push ev (measure-events m))
+             (incf (cdr cursor) (duration-units duration divisions))))
 
-         (next-measure ()
-           (close-measure)
-           (open-measure)
-           (setf accumulated 0))
+         (advance-voice (voice)
+           (let ((cursor (voice-cursor voice)))
+             (incf (car cursor))
+             (setf (cdr cursor) 0)))
+
+         (flush-voice (voice)
+           (when (>= (cdr (voice-cursor voice)) measure-cap)
+             (advance-voice voice)))
 
          ;; Place a run of dyadic-dotted pieces of one pitch as tied notes.
          ;; FIRST-ATTS go on the first piece, LAST-ATTS (spanner stops) on the
          ;; last.
          (place-note-pieces (pitch pieces first-p last-p src-start src-stop
-                                  &optional first-atts last-atts)
+                                  first-atts last-atts voice)
            (let ((np (length pieces)))
              (loop for piece in pieces
                    for j from 0
@@ -103,7 +103,8 @@ measure length integral in division units (i.e. 4*2^log divisible by each
                         (let* ((has-prev (not (and first-p (zerop j))))
                                (has-next (not (and last-p (= (1+ j) np))))
                                (dur (make-duration log :dots dots))
-                               (note (make-instance 'note :pitch pitch :duration dur)))
+                               (note (make-instance 'note :pitch pitch :duration dur
+                                                    :voice voice)))
                           (when (or has-prev (and first-p (zerop j) src-stop))
                             (setf (note-tie-stop-p note) t))
                           (when (or has-next (and last-p (= (1+ j) np) src-start))
@@ -112,14 +113,14 @@ measure length integral in division units (i.e. 4*2^log divisible by each
                             (setf (event-attachments note) first-atts))
                           (when (and last-p (= (1+ j) np) last-atts)
                             (setf (event-attachments note) last-atts))
-                          (push-event note dur))))))
+                          (push-event note dur voice))))))
 
-         (place-note (note)
+         (place-note (note voice)
            (let* ((value (duration-units (note-duration note) divisions))
-                  (remaining (- measure-cap accumulated))
+                  (remaining (- measure-cap (cdr (voice-cursor voice))))
                   (chunks (measure-chunks value remaining measure-cap)))
              (if (null (rest chunks))
-                 (push-event note (note-duration note))
+                 (push-event note (note-duration note) voice)
                  (let ((pitch (note-pitch note))
                        (src-start (note-tie-start-p note))
                        (src-stop (note-tie-stop-p note))
@@ -133,31 +134,34 @@ measure length integral in division units (i.e. 4*2^log divisible by each
                                                (= (1+ i) nchunks)
                                                src-start src-stop
                                                (remove-if #'attachment-stop-p atts)
-                                               (remove-if-not #'attachment-stop-p atts))
+                                               (remove-if-not #'attachment-stop-p atts)
+                                               voice)
                             (unless (= (1+ i) nchunks)
-                              (next-measure)))))))
+                              (advance-voice voice)))))))
 
-         (place-rest (rest-event)
+         (place-rest (rest-event voice)
            (let* ((value (duration-units (rest-duration rest-event) divisions))
-                  (remaining (- measure-cap accumulated))
+                  (remaining (- measure-cap (cdr (voice-cursor voice))))
                   (chunks (measure-chunks value remaining measure-cap)))
              (if (null (rest chunks))
-                 (push-event rest-event (rest-duration rest-event))
+                 (push-event rest-event (rest-duration rest-event) voice)
                  (loop for chunk in chunks
                        for i from 0
                        do (dolist (piece (decompose-units chunk divisions))
                             (destructuring-bind (log . dots) piece
-                              (let ((dur (make-duration log :dots dots)))
-                                (push-event (make-rest dur) dur))))
+                              (let* ((dur (make-duration log :dots dots))
+                                     (r (make-rest dur)))
+                                (setf (rest-voice r) voice)
+                                (push-event r dur voice))))
                           (unless (= (1+ i) (length chunks))
-                            (next-measure))))))
+                            (advance-voice voice))))))
 
-         (place-chord (chord)
+         (place-chord (chord voice)
            (let* ((value (duration-units (chord-duration chord) divisions))
-                  (remaining (- measure-cap accumulated))
+                  (remaining (- measure-cap (cdr (voice-cursor voice))))
                   (chunks (measure-chunks value remaining measure-cap)))
              (if (null (rest chunks))
-                 (push-event chord (chord-duration chord))
+                 (push-event chord (chord-duration chord) voice)
                  (let ((notes (chord-notes chord))
                        (atts (event-attachments chord))
                        (nchunks (length chunks)))
@@ -175,7 +179,8 @@ measure length integral in division units (i.e. 4*2^log divisible by each
                                                   (mapcar (lambda (n)
                                                             (let ((sub (make-instance 'note
                                                                                       :pitch (note-pitch n)
-                                                                                      :duration dur)))
+                                                                                      :duration dur
+                                                                                      :voice voice)))
                                                               (when (or has-prev
                                                                         (and (zerop i) (note-tie-stop-p n)))
                                                                 (setf (note-tie-stop-p sub) t))
@@ -186,6 +191,7 @@ measure length integral in division units (i.e. 4*2^log divisible by each
                                                               sub))
                                                           notes)))
                                            (let ((sub-chord (make-chord sub-notes dur)))
+                                             (setf (chord-voice sub-chord) voice)
                                              ;; Marks go on the first split chord; spanner
                                              ;; stops on the last.
                                              (cond
@@ -196,10 +202,9 @@ measure length integral in division units (i.e. 4*2^log divisible by each
                                                      (= (1+ j) (length pieces)))
                                                 (setf (event-attachments sub-chord)
                                                       (remove-if-not #'attachment-stop-p atts))))
-                                             (push-event sub-chord dur)))))
+                                             (push-event sub-chord dur voice)))))
                               (unless (= (1+ i) nchunks)
-                                (next-measure)))))))))
-      (open-measure)
+                                (advance-voice voice)))))))))
       (dolist (ev events)
         (etypecase ev
           (time-change
@@ -220,14 +225,18 @@ measure length integral in division units (i.e. 4*2^log divisible by each
            (setf (staff-clef-octave-shift staff) (clef-change-octave-shift ev))
            (mark-attrs))
           (barline
-           (when (measure-events current)
-             (next-measure)))
-          (note (place-note ev))
-          (rest-event (place-rest ev))
-          (chord (place-chord ev)))
-        (when (and current (>= accumulated measure-cap))
-          (next-measure)))
-      (close-measure)
-      (setf (staff-measures staff) (nreverse measures))
+           (when (plusp (cdr (voice-cursor (barline-voice ev))))
+             (advance-voice (barline-voice ev))))
+          (note (place-note ev (note-voice ev)))
+          (rest-event (place-rest ev (rest-voice ev)))
+          (chord (place-chord ev (chord-voice ev))))
+        (typecase ev
+          (note (flush-voice (note-voice ev)))
+          (rest-event (flush-voice (rest-voice ev)))
+          (chord (flush-voice (chord-voice ev)))
+          (t nil)))
+      (dolist (m measures)
+        (setf (measure-events m) (nreverse (measure-events m))))
+      (setf (staff-measures staff) measures)
       (setf (staff-divisions staff) divisions)
       (make-instance 'score :staves (list staff)))))

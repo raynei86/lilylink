@@ -521,7 +521,7 @@ duration (LOG . DOTS) or NIL, updating the parser's last-duration."
            (advance-token p)
            (prog1 (setf events (nreconc (parse-events p ctx) events))
              (expect-token p :brace-close)))
-          (:barline (advance-token p) (push (make-barline) events))
+          (:barline (advance-token p) (push (make-barline (parser-voice p)) events))
           (:pitch (let ((note (parse-note-event p ctx)))
                     (setf (parser-last-event p) note)
                     (push note events)))

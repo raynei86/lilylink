@@ -40,7 +40,8 @@
   ((clef :initarg :clef :accessor clef-change-clef)
    (octave-shift :initarg :octave-shift :initform 0 :accessor clef-change-octave-shift)))
 
-(defclass barline () ())
+(defclass barline ()
+  ((voice :initarg :voice :initform 1 :accessor barline-voice)))
 
 ;;; An attached expressive mark (articulation, ornament, dynamic, technical,
 ;;; or fermata).  KIND selects the MusicXML container, TAG is the XML element
@@ -160,8 +161,8 @@ moved into the mark's text slot."
 (defun make-clef-change (clef octave-shift)
   (make-instance 'clef-change :clef clef :octave-shift octave-shift))
 
-(defun make-barline ()
-  (make-instance 'barline))
+(defun make-barline (&optional (voice 1))
+  (make-instance 'barline :voice voice))
 
 (defparameter +pitch-step-letters+ "cdefgab")
 
