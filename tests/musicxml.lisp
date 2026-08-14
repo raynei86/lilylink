@@ -147,7 +147,7 @@
   (testing "articulations, dynamics, ornaments, technical, fermata"
     (let ((xml (lilylink:convert-string "\\relative c' { c4\\staccato d\\mf e\\trill f\\upbow g\\fermata }")))
       (ok (search "<articulations><staccato/></articulations>" xml))
-      (ok (search "<dynamics><mf/></dynamics>" xml))
+      (ok (search "<direction-type><dynamics><mf/></dynamics></direction-type>" xml))
       (ok (search "<ornaments><trill-mark/></ornaments>" xml))
       (ok (search "<technical><up-bow/></technical>" xml))
       (ok (search "<fermata/>" xml))))
@@ -177,7 +177,11 @@
     (let ((xml (lilylink:convert-string "\\relative c' { c4\\espressivo }")))
       (ok (search "<other-articulation>espressivo</other-articulation>" xml)))
     (let ((xml (lilylink:convert-string "\\relative c' { c4\\sff }")))
-      (ok (search "<other-dynamics>sff</other-dynamics>" xml)))))
+      (ok (search "<direction-type><dynamics><other-dynamics>sff</other-dynamics></dynamics></direction-type>" xml))))
+  (testing "dynamics are direction siblings, not in notations"
+    (let ((xml (lilylink:convert-string "\\relative c' { c4\\mf }")))
+      (ok (search "<note><pitch><step>C</step><octave>4</octave></pitch><duration>4</duration><type>quarter</type></note><direction placement=\"above\"><direction-type><dynamics><mf/></dynamics></direction-type></direction>" xml))
+      (ok (not (search "<notations><dynamics>" xml))))))
 
 (deftest convert-slurs-and-hairpins
   (testing "slurs emit as notations"
@@ -195,7 +199,7 @@
   (testing "a dynamic closes an open hairpin"
     (let ((xml (lilylink:convert-string "\\relative c' { c4\\< d\\f }")))
       (ok (search "<wedge type=\"stop\"" xml))
-      (ok (search "<dynamics><f/></dynamics>" xml)))))
+      (ok (search "<direction-type><dynamics><f/></dynamics></direction-type>" xml)))))
 
 (deftest convert-lines
   (testing "glissando emits start and stop"
@@ -291,7 +295,7 @@
 >>")))
       (ok (search "<score-part id=\"P2\">" xml))
       (ok (search "<sound tempo=\"120\"/>" xml))
-      (ok (search "<dynamics><mf/></dynamics>" xml))
+      (ok (search "<direction-type><dynamics><mf/></dynamics></direction-type>" xml))
       (ok (search "<articulations><staccato/></articulations>" xml))
       (ok (search "<articulations><tenuto/></articulations>" xml))
       (ok (search "<clef><sign>F</sign><line>4</line></clef>" xml)))))

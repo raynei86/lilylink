@@ -145,16 +145,15 @@ to have a closing tag even when it has no children."
 ;;; ---------------------------------------------------------------------------
 
 ;;; Each (KIND . CONTAINER) pair says which <notations> container a mark of a
-;;; given kind is emitted into.
+;;; given kind is emitted into.  Standalone dynamics are handled separately as
+;;; <direction> elements (see EMIT-DYNAMICS).
 (defparameter +mark-container+
   '((:articulation . "articulations")
     (:other-articulation . "articulations")
     (:ornament . "ornaments")
     (:other-ornament . "ornaments")
     (:technical . "technical")
-    (:other-technical . "technical")
-    (:dynamic . "dynamics")
-    (:other-dynamics . "dynamics")))
+    (:other-technical . "technical")))
 
 (defun mark-attr-pairs (mark)
   "MARK's attributes as a list of (KEY VALUE) pairs for BUILD-EL."
@@ -206,7 +205,7 @@ to have a closing tag even when it has no children."
                          (el :wavy-line (:type (trill-action a)
                                               :number (trill-number a))))))
      ;; Mark containers in a fixed order.
-     (loop for container in '("ornaments" "technical" "articulations" "dynamics")
+     (loop for container in '("ornaments" "technical" "articulations")
            for group = (remove-if-not
                         (lambda (mark)
                           (and (typep mark 'mark)
@@ -291,6 +290,27 @@ to have a closing tag even when it has no children."
                         (el :wedge (:type (wedge-type a)
                                          :number (wedge-number a)))))))
 
+;;; MusicXML places standalone dynamics inside a <dynamics> container within
+;;; <direction-type>, as <direction> siblings of the note.
+(defparameter +direction-container+
+  '((:dynamic . "dynamics")
+    (:other-dynamics . "dynamics")))
+
+(defun emit-dynamics (event)
+  "Standalone dynamic marks (\\f, \\mf, \\sff, ...) attached to EVENT as
+<direction> elements (standard placement, siblings of the note)."
+  (loop for mark in (event-attachments event)
+        when (and (typep mark 'mark)
+                  (member (mark-kind mark) '(:dynamic :other-dynamics)))
+        collect (el :direction (:placement "above")
+                    (el :direction-type nil
+                        (el (intern (string-upcase
+                                     (cdr (assoc (mark-kind mark)
+                                                 +direction-container+)))
+                                    "KEYWORD")
+                            nil
+                            (emit-mark mark))))))
+
 ;;; A tempo marking is a <direction> with an optional <words>, <metronome>,
 ;;; and <sound tempo>.
 (defun emit-tempo (ev)
@@ -367,11 +387,14 @@ to have a closing tag even when it has no children."
 note-attached directions follow their note)."
   (etypecase ev
     (note (append (list (emit-note ev divisions))
-                  (emit-wedges ev)))
+                  (emit-wedges ev)
+                  (emit-dynamics ev)))
     (rest-event (append (list (emit-rest ev divisions))
-                        (emit-wedges ev)))
+                        (emit-wedges ev)
+                        (emit-dynamics ev)))
     (chord (append (emit-chord ev divisions)
-                   (emit-wedges ev)))
+                   (emit-wedges ev)
+                   (emit-dynamics ev)))
     (barline nil)))
 
 (defun emit-part (staff id)
