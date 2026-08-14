@@ -175,56 +175,89 @@ to have a closing tag even when it has no children."
 ;;; chord-level marks merged into the first note), in MusicXML's required
 ;;; order: slurs, tied, glissando, trill ornaments, mark containers, fermata,
 ;;; arpeggio.  Returns a list of element strings (possibly empty).
+(defun slur-p (a) (typep a 'slur))
+(defun glissando-p (a) (typep a 'glissando))
+(defun trill-p (a) (typep a 'trill))
+(defun mark-p (a) (typep a 'mark))
+(defun fermata-p (a) (and (typep a 'mark) (eq (mark-kind a) :fermata)))
+(defun arpeggio-p (a) (typep a 'arpeggio))
+
+(defun emit-slurs (marks)
+  (mapcar (lambda (a)
+            (let ((number (if (slur-phrase-p a)
+                              (+ 100 (slur-number a))
+                              (slur-number a))))
+              (el :slur (:type (slur-action a) :number number))))
+          (remove-if-not #'slur-p marks)))
+
+(defun emit-glissandos (marks)
+  (mapcar (lambda (a)
+            (el :glissando (:type (glissando-action a)
+                                  :number (glissando-number a))))
+          (remove-if-not #'glissando-p marks)))
+
+(defun emit-trills (marks)
+  (mapcar (lambda (a)
+            (el :ornaments nil
+                (when (eq (trill-action a) :start) (el :trill-mark nil))
+                (el :wavy-line (:type (trill-action a)
+                                      :number (trill-number a)))))
+          (remove-if-not #'trill-p marks)))
+
+(defun emit-arpeggios (marks)
+  (mapcar (lambda (a)
+            (if (arpeggio-direction a)
+                (el :arpeggiate (:direction (arpeggio-direction a)))
+                (el :arpeggiate nil)))
+          (remove-if-not #'arpeggio-p marks)))
+
+(defun emit-fermatas (marks)
+  (mapcar (lambda (a) (build-el :fermata (mark-attr-pairs a) nil))
+          (remove-if-not #'fermata-p marks)))
+
+;;; Marks are grouped into their containers in a fixed order.
+(defparameter +mark-container-order+
+  '("ornaments" "technical" "articulations"))
+
+(defun emit-mark-containers (marks)
+  (let ((marks (remove-if-not #'mark-p marks)))
+    (loop for container in +mark-container-order+
+          for group = (remove-if-not
+                       (lambda (mark)
+                         (string= (cdr (assoc (mark-kind mark)
+                                              +mark-container+))
+                                  container))
+                       marks)
+          when group
+          collect (emit-mark-group container group))))
+
+;;; +notations-order+ is a list of (TEST . EMITTER) applied in order: TEST
+;;; selects the attachments an EMITTER handles (receiving the whole list and
+;;; returning its element strings).  Notated ties are emitted right after the
+;;; slurs (MusicXML's order), since they come from the note itself rather than
+;;; an attachment.
+(defparameter +notations-order+
+  (list (cons #'glissando-p #'emit-glissandos)
+        (cons #'trill-p #'emit-trills)
+        (cons #'mark-p #'emit-mark-containers)
+        (cons #'fermata-p #'emit-fermatas)
+        (cons #'arpeggio-p #'emit-arpeggios)))
+
 (defun notations-children (event &optional extra)
   (let ((marks (append extra (event-attachments event))))
     (append
      ;; Slurs.
-     (loop for a in marks
-           when (typep a 'slur)
-           collect (let ((number (if (slur-phrase-p a)
-                                     (+ 100 (slur-number a))
-                                     (slur-number a))))
-                     (el :slur (:type (slur-action a) :number number))))
+     (when (some #'slur-p marks) (emit-slurs marks))
      ;; Notated ties.
      (when (typep event 'note)
        (append (when (note-tie-stop-p event)
                  (list (el :tied (:type "stop"))))
                (when (note-tie-start-p event)
                  (list (el :tied (:type "start"))))))
-     ;; Glissandos.
-     (loop for a in marks
-           when (typep a 'glissando)
-           collect (el :glissando (:type (glissando-action a)
-                                        :number (glissando-number a))))
-     ;; Trill spans (ornaments container with wavy-line).
-     (loop for a in marks
-           when (typep a 'trill)
-           collect (let ((start (eq (trill-action a) :start)))
-                     (el :ornaments nil
-                         (when start (el :trill-mark nil))
-                         (el :wavy-line (:type (trill-action a)
-                                              :number (trill-number a))))))
-     ;; Mark containers in a fixed order.
-     (loop for container in '("ornaments" "technical" "articulations")
-           for group = (remove-if-not
-                        (lambda (mark)
-                          (and (typep mark 'mark)
-                               (string= (cdr (assoc (mark-kind mark)
-                                                    +mark-container+))
-                                        container)))
-                        marks)
-           when group
-           collect (emit-mark-group container group))
-     ;; Fermatas.
-     (loop for mark in marks
-           when (and (typep mark 'mark) (eq (mark-kind mark) :fermata))
-           collect (build-el :fermata (mark-attr-pairs mark) nil))
-     ;; Arpeggios.
-     (loop for a in marks
-           when (typep a 'arpeggio)
-           collect (if (arpeggio-direction a)
-                       (el :arpeggiate (:direction (arpeggio-direction a)))
-                       (el :arpeggiate nil))))))
+     ;; Everything else in registry order.
+     (loop for (test . emitter) in +notations-order+
+           when (some test marks)
+           append (funcall emitter marks)))))
 
 (defun emit-notations (event &optional extra)
   (let ((children (notations-children event extra)))
