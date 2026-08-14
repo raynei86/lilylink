@@ -44,7 +44,10 @@
       (ok (not (search "<sound" xml)))))
   (testing "tempo appears before the notes of its measure"
     (let ((xml (lilylink:convert-string "\\relative c' { \\tempo 4 = 96 c4 d }")))
-      (ok (search "<sound tempo=\"96\"/></direction><note>" xml)))))
+      (ok (search "<sound tempo=\"96\"/></direction><note>" xml))))
+  (testing "text content is XML-escaped"
+    (let ((xml (lilylink:convert-string "\\relative c' { \\tempo \"A & B < C\" 4 = 120 c4 }")))
+      (ok (search "<words>A &amp; B &lt; C</words>" xml)))))
 
 (deftest convert-basic-melody
   (testing "single staff score structure"

@@ -1,6 +1,94 @@
 (in-package #:lilylink)
 
-;;; Emit the intermediate representation as MusicXML (score-partwise).
+;;; Emit the intermediate representation as MusicXML (score-partwise), built
+;;; declaratively through the tiny EL / XML-ESCAPE helpers below rather than
+;;; by hand-concatenating format strings.
+
+;;; ---------------------------------------------------------------------------
+;;; A minimal XML writer
+;;; ---------------------------------------------------------------------------
+
+(defun xml-escape (string)
+  "Escape &, <, >, \\\", and ' in STRING for XML text/attribute content."
+  (with-output-to-string (out)
+    (loop for ch across string
+          do (case ch
+               (#\& (write-string "&amp;" out))
+               (#\< (write-string "&lt;" out))
+               (#\> (write-string "&gt;" out))
+               (#\" (write-string "&quot;" out))
+               (#\' (write-string "&apos;" out))
+               (t (write-char ch out))))))
+
+(defun build-el (tag attrs children &optional (force-open-close nil))
+  "Build an XML element as a string.  TAG names the element (lowercased);
+ATTRS is a list of (KEY VALUE) pairs; CHILDREN is a list of strings, numbers,
+keywords, or other element strings (a single list-valued child is flattened
+in, so callers may pass (append ...) or (mapcar ...) results).  NIL children
+are dropped; an element with no children is self-closing unless
+FORCE-OPEN-CLOSE is true (used for containers like <part> that must always
+have a closing tag).  Text and attribute values are escaped, and attribute
+values that are symbols (keywords) are lowercased."
+  (let ((name (string-downcase (symbol-name tag)))
+        (attr-strs nil)
+        (kids (flatten-children children)))
+    (dolist (pair attrs)
+      (destructuring-bind (key value) pair
+        (push (format nil " ~A=\"~A\""
+                      (string-downcase (symbol-name key))
+                      (xml-escape (attr-value-string value)))
+              attr-strs)))
+    (let ((attr-strs (nreverse attr-strs))
+          (kids (remove nil kids)))
+      (if (null kids)
+          (if force-open-close
+              (format nil "<~A~{~A~}></~A>" name attr-strs name)
+              (format nil "<~A~{~A~}/>" name attr-strs))
+          (format nil "<~A~{~A~}>~{~A~}</~A>"
+                  name attr-strs
+                  (mapcar (lambda (c)
+                            (etypecase c
+                              (string (xml-escape-text c))
+                              (integer (princ-to-string c))
+                              (symbol (xml-escape (string-downcase (symbol-name c))))
+                              (t (princ-to-string c))))
+                          kids)
+                  name)))))
+
+(defun xml-escape-text (string)
+  "Escape STRING as XML text content, unless it is already an element (i.e.
+begins with '<'), in which case it is emitted verbatim."
+  (if (and (plusp (length string)) (char= (char string 0) #\<))
+      string
+      (xml-escape string)))
+
+(defun attr-value-string (value)
+  "A string for an attribute VALUE; keywords are lowercased."
+  (if (keywordp value)
+      (string-downcase (symbol-name value))
+      (princ-to-string value)))
+
+(defun flatten-children (children)
+  "Flatten one level of CHILDREN so a single list child (e.g. from append or
+mapcar) contributes its elements directly."
+  (loop for c in children
+        append (if (and (consp c) (not (stringp c)) (not (keywordp c)))
+                   c
+                   (list c))))
+
+(defmacro el (tag attrs &rest children)
+  "Build an XML element.  TAG is a keyword naming the element; ATTRS is an
+attribute plist whose keys are literal keywords and whose values are
+expressions (evaluated at runtime); CHILDREN are forms whose values become
+child content.  A trailing :open-close keyword argument forces the element
+to have a closing tag even when it has no children."
+  (let ((open-close (and (member :open-close children) t))
+        (body (remove :open-close children))
+        (attr-forms nil))
+    (loop for (key value) on attrs by #'cddr
+          do (push `(list (quote ,key) ,value) attr-forms))
+    `(build-el ,tag (list ,@(nreverse attr-forms)) (list ,@body)
+               ,open-close)))
 
 (defparameter +duration-type-names+
   #("whole" "half" "quarter" "eighth" "16th" "32nd" "64th"
@@ -52,6 +140,12 @@
 (defun duration-in-divisions (duration divisions)
   (round (* divisions 4 (duration-value duration))))
 
+;;; ---------------------------------------------------------------------------
+;;; Marks and notations
+;;; ---------------------------------------------------------------------------
+
+;;; Each (KIND . CONTAINER) pair says which <notations> container a mark of a
+;;; given kind is emitted into.
 (defparameter +mark-container+
   '((:articulation . "articulations")
     (:other-articulation . "articulations")
@@ -62,169 +156,160 @@
     (:dynamic . "dynamics")
     (:other-dynamics . "dynamics")))
 
-(defun emit-mark-attrs (s mark)
+(defun mark-attr-pairs (mark)
+  "MARK's attributes as a list of (KEY VALUE) pairs for BUILD-EL."
   (loop for (key value) on (mark-attrs mark) by #'cddr
-        do (format s " ~A=\"~A\"" (string-downcase key) value)))
+        collect (list key value)))
 
-(defun emit-mark (s mark)
-  (format s "<~A" (mark-tag mark))
-  (emit-mark-attrs s mark)
-  (if (mark-text mark)
-      (format s ">~A</~A>" (mark-text mark) (mark-tag mark))
-      (write-string "/>" s)))
+(defun emit-mark (mark)
+  "A single MARK as an element string, with text content or self-closing."
+  (let ((tag (intern (string-upcase (mark-tag mark)) "KEYWORD")))
+    (if (mark-text mark)
+        (build-el tag (mark-attr-pairs mark) (list (mark-text mark)))
+        (build-el tag (mark-attr-pairs mark) nil))))
 
-(defun emit-mark-group (s container marks)
-  (write-string (format nil "<~A>" container) s)
-  (dolist (mark marks)
-    (emit-mark s mark))
-  (write-string (format nil "</~A>" container) s))
+(defun emit-mark-group (container marks)
+  (el (intern (string-upcase container) "KEYWORD") nil
+      (mapcar #'emit-mark marks)))
 
-;;; Write the children of <notations> (slur, tied, then mark containers) for
-;;; EVENT, plus any EXTRA attachments (e.g. chord-level marks merged into the
-;;; first note).  Returns whether anything was written.
-(defun emit-notations-content (s event &optional extra)
-  (let ((written nil)
-        (marks (append extra (event-attachments event))))
-    (dolist (attachment marks)
-      (when (typep attachment 'slur)
-        (let ((number (if (slur-phrase-p attachment)
-                          (+ 100 (slur-number attachment))
-                          (slur-number attachment))))
-          (format s "<slur type=\"~A\" number=\"~D\"/>"
-                  (string-downcase (slur-action attachment)) number))
-        (setf written t)))
-    (when (typep event 'note)
-      (when (note-tie-stop-p event)
-        (write-string "<tied type=\"stop\"/>" s)
-        (setf written t))
-      (when (note-tie-start-p event)
-        (write-string "<tied type=\"start\"/>" s)
-        (setf written t)))
-    (dolist (attachment marks)
-      (when (typep attachment 'glissando)
-        (format s "<glissando type=\"~A\" number=\"~D\"/>"
-                (string-downcase (glissando-action attachment))
-                (glissando-number attachment))
-        (setf written t)))
-    (dolist (attachment marks)
-      (when (typep attachment 'trill)
-        (write-string "<ornaments>" s)
-        (when (eq (trill-action attachment) :start)
-          (write-string "<trill-mark/>" s))
-        (format s "<wavy-line type=\"~A\" number=\"~D\"/>" 
-                (string-downcase (trill-action attachment))
-                (trill-number attachment))
-        (write-string "</ornaments>" s)
-        (setf written t)))
-    (dolist (container '("ornaments" "technical" "articulations" "dynamics"))
-      (let ((group (remove-if-not
-                    (lambda (mark)
-                      (and (typep mark 'mark)
-                           (string= (cdr (assoc (mark-kind mark) +mark-container+))
-                                    container)))
-                    marks)))
-        (when group
-          (emit-mark-group s container group)
-          (setf written t))))
-    (dolist (mark marks)
-      (when (and (typep mark 'mark) (eq (mark-kind mark) :fermata))
-        (write-string "<fermata" s)
-        (emit-mark-attrs s mark)
-        (write-string "/>" s)
-        (setf written t)))
-    (dolist (attachment marks)
-      (when (typep attachment 'arpeggio)
-        (if (arpeggio-direction attachment)
-            (format s "<arpeggiate direction=\"~A\"/>"
-                    (string-downcase (arpeggio-direction attachment)))
-            (write-string "<arpeggiate/>" s))
-        (setf written t)))
-    written))
+;;; The children of <notations> for EVENT plus any EXTRA attachments (e.g.
+;;; chord-level marks merged into the first note), in MusicXML's required
+;;; order: slurs, tied, glissando, trill ornaments, mark containers, fermata,
+;;; arpeggio.  Returns a list of element strings (possibly empty).
+(defun notations-children (event &optional extra)
+  (let ((marks (append extra (event-attachments event))))
+    (append
+     ;; Slurs.
+     (loop for a in marks
+           when (typep a 'slur)
+           collect (let ((number (if (slur-phrase-p a)
+                                     (+ 100 (slur-number a))
+                                     (slur-number a))))
+                     (el :slur (:type (slur-action a) :number number))))
+     ;; Notated ties.
+     (when (typep event 'note)
+       (append (when (note-tie-stop-p event)
+                 (list (el :tied (:type "stop"))))
+               (when (note-tie-start-p event)
+                 (list (el :tied (:type "start"))))))
+     ;; Glissandos.
+     (loop for a in marks
+           when (typep a 'glissando)
+           collect (el :glissando (:type (glissando-action a)
+                                        :number (glissando-number a))))
+     ;; Trill spans (ornaments container with wavy-line).
+     (loop for a in marks
+           when (typep a 'trill)
+           collect (let ((start (eq (trill-action a) :start)))
+                     (el :ornaments nil
+                         (when start (el :trill-mark nil))
+                         (el :wavy-line (:type (trill-action a)
+                                              :number (trill-number a))))))
+     ;; Mark containers in a fixed order.
+     (loop for container in '("ornaments" "technical" "articulations" "dynamics")
+           for group = (remove-if-not
+                        (lambda (mark)
+                          (and (typep mark 'mark)
+                               (string= (cdr (assoc (mark-kind mark)
+                                                    +mark-container+))
+                                        container)))
+                        marks)
+           when group
+           collect (emit-mark-group container group))
+     ;; Fermatas.
+     (loop for mark in marks
+           when (and (typep mark 'mark) (eq (mark-kind mark) :fermata))
+           collect (build-el :fermata (mark-attr-pairs mark) nil))
+     ;; Arpeggios.
+     (loop for a in marks
+           when (typep a 'arpeggio)
+           collect (if (arpeggio-direction a)
+                       (el :arpeggiate (:direction (arpeggio-direction a)))
+                       (el :arpeggiate nil))))))
 
-(defun emit-notations (s event &optional extra)
-  (let ((content (with-output-to-string (cs)
-                   (emit-notations-content cs event extra))))
-    (unless (string= content "")
-      (write-string "<notations>" s)
-      (write-string content s)
-      (write-string "</notations>" s))))
+(defun emit-notations (event &optional extra)
+  (let ((children (notations-children event extra)))
+    (when children
+      (el :notations nil children))))
 
-(defun emit-pitch (s pitch)
-  (format s "<pitch><step>~C</step>"
-          (char-upcase (pitch-step-letter (pitch-step pitch))))
-  (unless (zerop (pitch-alter pitch))
-    (format s "<alter>~A</alter>" (pitch-alter pitch)))
-  (format s "<octave>~D</octave></pitch>" (pitch-octave pitch)))
+;;; ---------------------------------------------------------------------------
+;;; Notes, rests, and chords
+;;; ---------------------------------------------------------------------------
 
-(defun emit-dots (s dots)
-  (loop repeat dots
-        do (write-string "<dot/>" s)))
+(defun emit-pitch (pitch)
+  (el :pitch nil
+      (el :step nil (char-upcase (pitch-step-letter (pitch-step pitch))))
+      (unless (zerop (pitch-alter pitch))
+        (el :alter nil (pitch-alter pitch)))
+      (el :octave nil (pitch-octave pitch))))
 
-(defun emit-duration (s duration divisions)
-  (format s "<duration>~D</duration><type>~A</type>"
-          (duration-in-divisions duration divisions)
-          (duration-type-name (duration-log duration)))
-  (emit-dots s (duration-dots duration)))
+(defun emit-dots (dots)
+  (loop repeat dots collect (el :dot nil)))
 
-(defun emit-note (s note divisions &optional chord-p extra)
-  (write-string "<note>" s)
-  (when chord-p (write-string "<chord/>" s))
-  (emit-pitch s (note-pitch note))
-  (format s "<duration>~D</duration>"
-          (duration-in-divisions (note-duration note) divisions))
-  ;; <tie> (the sound tie) precedes <type>/<dot>; the notated marks live
-  ;; inside a trailing <notations> block.
-  (when (note-tie-stop-p note)
-    (write-string "<tie type=\"stop\"/>" s))
-  (when (note-tie-start-p note)
-    (write-string "<tie type=\"start\"/>" s))
-  (when *emit-voice*
-    (format s "<voice>~D</voice>" (note-voice note)))
-  (format s "<type>~A</type>"
-          (duration-type-name (duration-log (note-duration note))))
-  (emit-dots s (duration-dots (note-duration note)))
-  (emit-notations s note extra)
-  (write-string "</note>" s))
+(defun emit-duration (duration divisions)
+  (append
+   (list (el :duration nil (duration-in-divisions duration divisions))
+         (el :type nil (duration-type-name (duration-log duration))))
+   (emit-dots (duration-dots duration))))
 
-(defun emit-rest (s rest divisions)
-  (write-string "<note><rest/>" s)
-  (format s "<duration>~D</duration>"
-          (duration-in-divisions (rest-duration rest) divisions))
-  (when *emit-voice*
-    (format s "<voice>~D</voice>" (rest-voice rest)))
-  (format s "<type>~A</type>"
-          (duration-type-name (duration-log (rest-duration rest))))
-  (emit-dots s (duration-dots (rest-duration rest)))
-  (emit-notations s rest)
-  (write-string "</note>" s))
+(defun emit-note (note divisions &optional chord-p extra)
+  (el :note nil
+      (when chord-p (el :chord nil))
+      (emit-pitch (note-pitch note))
+      (el :duration nil (duration-in-divisions (note-duration note) divisions))
+      (when (note-tie-stop-p note) (el :tie (:type "stop")))
+      (when (note-tie-start-p note) (el :tie (:type "start")))
+      (when *emit-voice* (el :voice nil (note-voice note)))
+      (el :type nil (duration-type-name (duration-log (note-duration note))))
+      (emit-dots (duration-dots (note-duration note)))
+      (emit-notations note extra)))
 
-(defun emit-chord (s chord divisions)
+(defun emit-rest (rest divisions)
+  (el :note nil
+      (el :rest nil)
+      (el :duration nil (duration-in-divisions (rest-duration rest) divisions))
+      (when *emit-voice* (el :voice nil (rest-voice rest)))
+      (el :type nil (duration-type-name (duration-log (rest-duration rest))))
+      (emit-dots (duration-dots (rest-duration rest)))
+      (emit-notations rest)))
+
+(defun emit-chord (chord divisions)
   (let ((notes (chord-notes chord)))
-    (emit-note s (first notes) divisions nil (chord-attachments chord))
-    (dolist (n (rest notes))
-      (emit-note s n divisions t))))
+    (cons (emit-note (first notes) divisions nil (chord-attachments chord))
+          (mapcar (lambda (n) (emit-note n divisions t)) (rest notes)))))
 
-(defun emit-event (s ev divisions)
-  (typecase ev
-    (note
-     (emit-note s ev divisions)
-     (emit-wedges s ev))
-    (rest-event
-     (emit-rest s ev divisions)
-     (emit-wedges s ev))
-    (chord
-     (emit-chord s ev divisions)
-     (emit-wedges s ev))
-    (t (emit-error "Cannot emit event ~S" ev))))
+;;; ---------------------------------------------------------------------------
+;;; Directions: hairpins, dynamics, and tempo
+;;; ---------------------------------------------------------------------------
 
-;;; Hairpins are <direction> elements, siblings of <note>, so they are emitted
-;;; after the note (or chord) they attach to.
-(defun emit-wedges (s event)
-  (dolist (attachment (event-attachments event))
-    (when (typep attachment 'wedge)
-      (format s "<direction placement=\"above\"><direction-type><wedge type=\"~A\" number=\"~D\"/></direction-type></direction>"
-              (string-downcase (wedge-type attachment))
-              (wedge-number attachment)))))
+(defun emit-wedges (event)
+  "Hairpin <direction> elements attached to EVENT."
+  (loop for a in (event-attachments event)
+        when (typep a 'wedge)
+        collect (el :direction (:placement "above")
+                    (el :direction-type nil
+                        (el :wedge (:type (wedge-type a)
+                                         :number (wedge-number a)))))))
+
+;;; A tempo marking is a <direction> with an optional <words>, <metronome>,
+;;; and <sound tempo>.
+(defun emit-tempo (ev)
+  (el :direction (:placement "above")
+      (el :direction-type nil
+          (when (tempo-text ev) (el :words nil (tempo-text ev)))
+          (when (tempo-beat-unit ev)
+            (el :metronome nil
+                (el :beat-unit nil
+                    (duration-type-name
+                     (duration-log-from-num (tempo-beat-unit ev))))
+                (when (tempo-per-minute ev)
+                  (el :per-minute nil (tempo-per-minute ev))))))
+      (when (tempo-per-minute ev)
+        (el :sound (:tempo (tempo-per-minute ev))))))
+
+;;; ---------------------------------------------------------------------------
+;;; Attributes and measures
+;;; ---------------------------------------------------------------------------
 
 (defun clef-sign-line (clef)
   (let ((entry (assoc clef +clef-signs+)))
@@ -233,79 +318,77 @@
     (destructuring-bind (sign line) (cdr entry)
       (values sign line))))
 
-(defun emit-attributes (s data divisions)
+(defun emit-attributes (data divisions)
   "Emit <attributes> from DATA, a plist snapshot of staff attributes."
   (let ((clef (getf data :clef))
         (octave-shift (getf data :clef-octave-shift)))
     (multiple-value-bind (sign line) (clef-sign-line clef)
-      (format s "<attributes><divisions>~D</divisions>" divisions)
-      (format s "<key><fifths>~D</fifths><mode>~A</mode></key>"
-              (getf data :key-fifths)
-              (if (eq (getf data :key-mode) :minor) "minor" "major"))
-      (format s "<time><beats>~D</beats><beat-type>~D</beat-type></time>"
-              (getf data :time-beats) (getf data :time-beat-type))
-      (format s "<clef><sign>~A</sign><line>~D</line>" sign line)
-      (unless (zerop octave-shift)
-        (format s "<octave-change>~D</octave-change>" octave-shift))
-      (write-string "</clef></attributes>" s))))
+      (el :attributes nil
+          (el :divisions nil divisions)
+          (el :key nil
+              (el :fifths nil (getf data :key-fifths))
+              (el :mode nil (if (eq (getf data :key-mode) :minor)
+                                "minor" "major")))
+          (el :time nil
+              (el :beats nil (getf data :time-beats))
+              (el :beat-type nil (getf data :time-beat-type)))
+          (el :clef nil
+              (el :sign nil sign)
+              (el :line nil line)
+              (unless (zerop octave-shift)
+                (el :octave-change nil octave-shift)))))))
 
-;;; A tempo marking is a <direction> with an optional <words>, <metronome>,
-;;; and <sound tempo>.
-(defun emit-tempo (s ev)
-  (write-string "<direction placement=\"above\"><direction-type>" s)
-  (when (tempo-text ev)
-    (format s "<words>~A</words>" (tempo-text ev)))
-  (when (tempo-beat-unit ev)
-    (format s "<metronome><beat-unit>~A</beat-unit>"
-            (duration-type-name (duration-log-from-num (tempo-beat-unit ev))))
-    (when (tempo-per-minute ev)
-      (format s "<per-minute>~D</per-minute>" (tempo-per-minute ev)))
-    (write-string "</metronome>" s))
-  (write-string "</direction-type>" s)
-  (when (tempo-per-minute ev)
-    (format s "<sound tempo=\"~D\"/>" (tempo-per-minute ev)))
-  (write-string "</direction>" s))
+(defun emit-measure (measure divisions)
+  "A whole <measure> element string."
+  (el :measure (:number (measure-number measure))
+      (when (measure-attributes measure)
+        (emit-attributes (measure-attr-data measure) divisions))
+      (let* ((events (measure-events measure))
+             ;; Directions (tempo) are emitted before the voice-grouped notes.
+             (directions (remove-if-not (lambda (ev) (typep ev 'tempo-change))
+                                        events))
+             (musical (remove-if (lambda (ev) (typep ev 'tempo-change)) events))
+             (groups (group-by-voice musical))
+             (totals (mapcar (lambda (group) (voice-total (cdr group) divisions))
+                             groups)))
+        (append
+         (mapcar #'emit-tempo directions)
+         (loop for group in groups
+               for total in totals
+               for i from 0
+               append (append (when (plusp i)
+                                (list (el :backup nil
+                                          (el :duration nil (nth (1- i) totals)))))
+                              (loop for ev in (cdr group)
+                                    append (emit-event ev divisions))))))))
 
-(defun emit-measure (s measure divisions)
-  (format s "<measure number=\"~D\">" (measure-number measure))
-  (when (measure-attributes measure)
-    (emit-attributes s (measure-attr-data measure) divisions))
-  (let* ((events (measure-events measure))
-         ;; Directions (tempo) are emitted before the voice-grouped notes.
-         (directions (remove-if-not (lambda (ev) (typep ev 'tempo-change)) events))
-         (musical (remove-if (lambda (ev) (typep ev 'tempo-change)) events))
-         (groups (group-by-voice musical))
-         (totals (mapcar (lambda (group) (voice-total (cdr group) divisions))
-                         groups)))
-    (dolist (ev directions)
-      (emit-tempo s ev))
-    (loop for group in groups
-          for total in totals
-          for i from 0
-          do (when (plusp i)
-               (format s "<backup><duration>~D</duration></backup>"
-                       (nth (1- i) totals)))
-             (dolist (ev (cdr group))
-               (emit-event s ev divisions))))
-  (write-string "</measure>" s))
+(defun emit-event (ev divisions)
+  "EVENT as a list of element strings (a chord expands to several notes, and
+note-attached directions follow their note)."
+  (etypecase ev
+    (note (append (list (emit-note ev divisions))
+                  (emit-wedges ev)))
+    (rest-event (append (list (emit-rest ev divisions))
+                        (emit-wedges ev)))
+    (chord (append (emit-chord ev divisions)
+                   (emit-wedges ev)))
+    (barline nil)))
 
-(defun emit-part (s staff id)
-  (format s "<part id=\"P~D\">" id)
-  (dolist (m (staff-measures staff))
-    (emit-measure s m (staff-divisions staff)))
-  (write-string "</part>" s))
+(defun emit-part (staff id)
+  (el :part (:id (format nil "P~D" id)) :open-close
+      (mapcar (lambda (m) (emit-measure m (staff-divisions staff)))
+              (staff-measures staff))))
 
 (defun emit-score (s score)
   (let ((*emit-voice* (score-polyphonic-p score))
         (staves (score-staves score)))
-    (write-string "<score-partwise version=\"3.1\">" s)
-    (write-string "<part-list>" s)
-    (loop for staff in staves
-          for id from 1
-          do (format s "<score-part id=\"P~D\"><part-name>Music</part-name></score-part>"
-                     id))
-    (write-string "</part-list>" s)
-    (loop for staff in staves
-          for id from 1
-          do (emit-part s staff id))
-    (write-string "</score-partwise>" s)))
+    (let ((xml (el :score-partwise (:version "3.1")
+                   (el :part-list nil
+                       (loop for staff in staves
+                             for id from 1
+                             collect (el :score-part (:id (format nil "P~D" id))
+                                         (el :part-name nil "Music"))))
+                   (loop for staff in staves
+                         for id from 1
+                         collect (emit-part staff id)))))
+      (write-string xml s))))
