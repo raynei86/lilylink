@@ -1,6 +1,13 @@
 (uiop:define-package lilylink
   (:use #:cl)
   (:import-from #:alexandria #:when-let #:if-let)
+  (:import-from #:serapeum #:etypecase-of
+                            #:assocdr
+                            #:ensure
+                            #:collecting
+                            #:filter-map
+                            #:in
+                            #:defconst)
   (:export #:convert-string
            #:convert-file
            #:tokenize

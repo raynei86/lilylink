@@ -3,7 +3,8 @@
   :author "Lihui Zhang"
   :mailto "zlihui486@gmail.com"
   :license "GPLv3"
-  :depends-on ("alexandria")
+  :depends-on ("alexandria"
+               "serapeum")
   :components ((:module "src"
                 :components
                 ((:file "main")
