@@ -418,17 +418,16 @@ to have a closing tag even when it has no children."
 (defun emit-event (ev divisions)
   "EVENT as a list of element strings (a chord expands to several notes, and
 note-attached directions follow their note)."
-  (etypecase ev
+  (etypecase-of musical-event ev
     (note (append (list (emit-note ev divisions))
-                  (emit-wedges ev)
-                  (emit-dynamics ev)))
+               (emit-wedges ev)
+               (emit-dynamics ev)))
     (rest-event (append (list (emit-rest ev divisions))
-                        (emit-wedges ev)
-                        (emit-dynamics ev)))
-    (chord (append (emit-chord ev divisions)
                    (emit-wedges ev)
                    (emit-dynamics ev)))
-    (barline nil)))
+    (chord (append (emit-chord ev divisions)
+               (emit-wedges ev)
+               (emit-dynamics ev)))))
 
 (defun emit-part (staff id)
   (el :part (:id (format nil "P~D" id)) :open-close

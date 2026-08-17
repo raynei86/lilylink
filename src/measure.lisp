@@ -26,7 +26,7 @@ measure length integral in division units (i.e. 4*2^log divisible by each
 \\time beat-type)."
   (let ((log 0))
     (dolist (ev events log)
-      (etypecase ev
+      (etypecase-of event ev
         (time-change
          (setf log (max log (- (beat-type-log (time-change-beat-type ev)) 2))))
         (note
@@ -223,7 +223,7 @@ ordered by staff number."
                               (unless (= (1+ i) nchunks)
                                 (advance-voice voice)))))))))
       (dolist (ev events)
-        (etypecase ev
+        (etypecase-of event ev
           (time-change
            (setf (staff-time-beats staff) (time-change-beats ev))
            (setf (staff-time-beat-type staff) (time-change-beat-type ev))

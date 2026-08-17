@@ -197,6 +197,18 @@ moved into the mark's text slot."
   (make-instance 'tempo-change :text text :beat-unit beat-unit
                  :per-minute per-minute :staff staff))
 
+;;; The union of all events that flow through the parse/build/emit
+;;; pipeline.  Used for exhaustive dispatch (etypecase-of).
+(deftype event ()
+  '(or note rest-event chord barline
+    time-change key-change clef-change tempo-change))
+
+;;; The events that survive into a measure's event list and are emitted
+;;; as <note> elements (build-score turns time/key/clef changes into
+;;; attributes and consumes barlines, so neither reaches emit-event).
+(deftype musical-event ()
+  '(or note rest-event chord))
+
 (defparameter +pitch-step-letters+ "cdefgab")
 
 (defparameter +max-duration-log+ 10
