@@ -11,8 +11,8 @@
 (defun xml-escape (string)
   "Escape &, <, >, \\\", and ' in STRING for XML text/attribute content."
   (with-output-to-string (out)
-    (loop for ch across string
-          do (case ch
+    (iter (for ch in-string string)
+          (case ch
                (#\& (write-string "&amp;" out))
                (#\< (write-string "&lt;" out))
                (#\> (write-string "&gt;" out))
@@ -71,10 +71,10 @@ begins with '<'), in which case it is emitted verbatim."
 (defun flatten-children (children)
   "Flatten one level of CHILDREN so a single list child (e.g. from append or
 mapcar) contributes its elements directly."
-  (loop for c in children
-        append (if (and (consp c) (not (stringp c)) (not (keywordp c)))
-                   c
-                   (list c))))
+  (iter (for c in children)
+        (appending (if (and (consp c) (not (stringp c)) (not (keywordp c)))
+                       c
+                       (list c)))))
 
 (defmacro el (tag attrs &rest children)
   "Build an XML element.  TAG is a keyword naming the element; ATTRS is an
@@ -85,8 +85,8 @@ to have a closing tag even when it has no children."
   (let ((open-close (and (member :open-close children) t))
         (body (remove :open-close children))
         (attr-forms nil))
-    (loop for (key value) on attrs by #'cddr
-          do (push `(list (quote ,key) ,value) attr-forms))
+    (iter (for (key value) on attrs by #'cddr)
+          (push `(list (quote ,key) ,value) attr-forms))
     `(build-el ,tag (list ,@(nreverse attr-forms)) (list ,@body)
                ,open-close)))
 
@@ -109,28 +109,28 @@ to have a closing tag even when it has no children."
     (t 1)))
 
 (defun score-polyphonic-p (score)
-  (loop for staff in (score-staves score)
-        thereis (loop for m in (staff-measures staff)
-                      thereis (loop for ev in (measure-events m)
-                                    thereis (> (event-voice-of ev) 1)))))
+  (iter (for staff in (score-staves score))
+        (thereis (iter (for m in (staff-measures staff))
+                       (thereis (iter (for ev in (measure-events m))
+                                      (thereis (> (event-voice-of ev) 1))))))))
 
 (defun group-by-voice (events)
   "Group EVENTS by voice number, returning ((voice . events) ...) in order."
   (let ((table (make-hash-table)))
     (dolist (ev events)
       (push ev (gethash (event-voice-of ev) table)))
-    (sort (loop for voice being the hash-keys of table
-                collect (cons voice (nreverse (gethash voice table))))
+    (sort (iter (for (voice ev) in-hashtable table)
+                (collect (cons voice (nreverse ev))))
           #'< :key #'car)))
 
 (defun voice-total (events divisions)
   "Total duration of EVENTS in division units (a chord counts once)."
-  (loop for ev in events
-        sum (typecase ev
-              (note (duration-units (note-duration ev) divisions))
-              (rest-event (duration-units (rest-duration ev) divisions))
-              (chord (duration-units (chord-duration ev) divisions))
-              (t 0))))
+  (iter (for ev in events)
+        (sum (typecase ev
+               (note (duration-units (note-duration ev) divisions))
+               (rest-event (duration-units (rest-duration ev) divisions))
+               (chord (duration-units (chord-duration ev) divisions))
+               (t 0)))))
 
 (defun duration-type-name (log)
   (unless (< log (length +duration-type-names+))
@@ -157,8 +157,8 @@ to have a closing tag even when it has no children."
 
 (defun mark-attr-pairs (mark)
   "MARK's attributes as a list of (KEY VALUE) pairs for BUILD-EL."
-  (loop for (key value) on (mark-attrs mark) by #'cddr
-        collect (list key value)))
+  (iter (for (key value) on (mark-attrs mark) by #'cddr)
+        (collect (list key value))))
 
 (defun emit-mark (mark)
   "A single MARK as an element string, with text content or self-closing."
@@ -227,15 +227,15 @@ to have a closing tag even when it has no children."
 
 (defun emit-mark-containers (marks)
   (let ((marks (remove-if-not #'mark-p marks)))
-     (loop for container in +mark-container-order+
-           for group = (remove-if-not
-                        (lambda (mark)
-                          (string= (assocdr (mark-kind mark)
-                                               +mark-container+)
-                                   container))
-                       marks)
-          when group
-          collect (emit-mark-group container group))))
+     (iter (for container in +mark-container-order+)
+           (for group = (remove-if-not
+                         (lambda (mark)
+                           (string= (assocdr (mark-kind mark)
+                                                +mark-container+)
+                                    container))
+                         marks))
+           (when group
+             (collect (emit-mark-group container group))))))
 
 ;;; +notations-order+ is a list of (TEST . EMITTER) applied in order: TEST
 ;;; selects the attachments an EMITTER handles (receiving the whole list and
@@ -261,9 +261,9 @@ to have a closing tag even when it has no children."
                (when (note-tie-start-p event)
                  (list (el :tied (:type "start"))))))
      ;; Everything else in registry order.
-     (loop for (test . emitter) in +notations-order+
-           when (some test marks)
-           append (funcall emitter marks)))))
+     (iter (for (test . emitter) in +notations-order+)
+           (when (some test marks)
+             (appending (funcall emitter marks)))))))
 
 (defun emit-notations (event &optional extra)
   (let ((children (notations-children event extra)))
@@ -282,7 +282,7 @@ to have a closing tag even when it has no children."
       (el :octave nil (pitch-octave pitch))))
 
 (defun emit-dots (dots)
-  (loop repeat dots collect (el :dot nil)))
+  (iter (repeat dots) (collect (el :dot nil))))
 
 (defun emit-duration (duration divisions)
   (append
@@ -414,14 +414,14 @@ to have a closing tag even when it has no children."
                              groups)))
         (append
          (mapcar #'emit-tempo directions)
-         (loop for group in groups
-               for total in totals
-               for i from 0
-               append (append (when (plusp i)
-                                (list (el :backup nil
-                                          (el :duration nil (nth (1- i) totals)))))
-                              (loop for ev in (cdr group)
-                                    append (emit-event ev divisions))))))))
+         (iter (for group in groups)
+               (for total in totals)
+               (for i from 0)
+               (appending (append (when (plusp i)
+                                    (list (el :backup nil
+                                              (el :duration nil (nth (1- i) totals)))))
+                                  (iter (for ev in (cdr group))
+                                        (appending (emit-event ev divisions))))))))))
 
 (defun emit-event (ev divisions)
   "EVENT as a list of element strings (a chord expands to several notes, and
@@ -447,11 +447,11 @@ note-attached directions follow their note)."
         (staves (score-staves score)))
     (let ((xml (el :score-partwise (:version "3.1")
                    (el :part-list nil
-                       (loop for staff in staves
-                             for id from 1
-                             collect (el :score-part (:id (format nil "P~D" id))
-                                         (el :part-name nil "Music"))))
-                   (loop for staff in staves
-                         for id from 1
-                         collect (emit-part staff id)))))
+                       (iter (for staff in staves)
+                             (for id from 1)
+                             (collect (el :score-part (:id (format nil "P~D" id))
+                                          (el :part-name nil "Music"))))
+                   (iter (for staff in staves)
+                         (for id from 1)
+                         (collect (emit-part staff id)))))))
       (write-string xml s))))
