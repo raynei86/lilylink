@@ -17,15 +17,15 @@
   "Split UNITS (division units) into a list of chunk sizes that fit across
 measures: the first chunk is limited to REMAINING units in the current measure,
 every later chunk to CAP units (one full measure)."
-  (let ((chunks nil)
-        (u units)
-        (c remaining))
-    (loop while (> u 0)
-          do (let ((piece (min u c)))
-               (push piece chunks)
-               (decf u piece)
-               (setf c cap)))
-    (nreverse chunks)))
+  (iter (with chunks = nil)
+        (with u = units)
+        (with c = remaining)
+        (while (> u 0))
+        (let ((piece (min u c)))
+          (push piece chunks)
+          (decf u piece)
+          (setf c cap))
+        (finally (return (nreverse chunks)))))
 
 (defun largest-dyadic-dotted-piece (units divisions)
   "Largest dyadic-dotted note value <= UNITS (division units).
@@ -35,14 +35,14 @@ Returns (values log dots piece-units)."
         (best-log 0)
         (best-dots 0)
         (best-units 0))
-    (loop for k from 0 to max-k
-          do (loop for d from 0 to (min 4 k)
-                   for numer = (1- (expt 2 (1+ d)))
-                   for val = (floor (* whole numer) (expt 2 k))
-                   when (and (<= val units) (> val best-units))
-                   do (setf best-units val
-                            best-log (- k d)
-                            best-dots d)))
+    (iter (for k from 0 to max-k)
+          (iter (for d from 0 to (min 4 k))
+                (let* ((numer (1- (expt 2 (1+ d))))
+                       (val (floor (* whole numer) (expt 2 k))))
+                  (when (and (<= val units) (> val best-units))
+                    (setf best-units val
+                          best-log (- k d)
+                          best-dots d)))))
     (when (zerop best-units)
       (emit-error "Cannot represent ~D division units as a note value" units))
     (values best-log best-dots best-units)))
@@ -52,9 +52,9 @@ Returns (values log dots piece-units)."
 notes summing to UNITS, greedy largest-first."
   (let ((pieces nil)
         (u units))
-    (loop while (> u 0)
-          do (multiple-value-bind (log dots piece)
-                 (largest-dyadic-dotted-piece u divisions)
-               (push (cons log dots) pieces)
-               (decf u piece)))
-    (nreverse pieces)))
+    (iter (while (> u 0))
+          (multiple-value-bind (log dots piece)
+              (largest-dyadic-dotted-piece u divisions)
+            (push (cons log dots) pieces)
+            (decf u piece))
+          (finally (return (nreverse pieces))))))
