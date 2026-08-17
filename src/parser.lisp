@@ -102,10 +102,10 @@ the offending token was not yet consumed); SKIP-COMMAND leaves the already
 consumed command token behind and passes NIL."
   (when advance-one
     (advance-token p))
-  (loop while (and (peek-token p)
-                   (not (member (token-type (peek-token p))
-                                +event-start-types+)))
-        do (advance-token p)))
+  (iter (while (and (peek-token p)
+                    (not (member (token-type (peek-token p))
+                                 +event-start-types+))))
+        (advance-token p)))
 
 (defun recover (p restart fmt &rest args)
   "Handle a recoverable problem at the current token.  In strict mode
@@ -127,10 +127,10 @@ The warning carries the current token's location."
   "Best-effort recovery for a consumed top-level \\command: skip bare
 note/word/argument tokens and one optional trailing braced block, stopping
 at the next top-level construct."
-  (loop while (and (peek-token p)
-                   (member (token-type (peek-token p))
-                           '(:pitch :rest :number :word :slash :string)))
-        do (advance-token p))
+  (iter (while (and (peek-token p)
+                    (member (token-type (peek-token p))
+                            '(:pitch :rest :number :word :slash :string))))
+        (advance-token p))
   (when (and (peek-token p) (eq (token-type (peek-token p)) :brace-open))
     (skip-braced-block p)))
 
@@ -271,61 +271,60 @@ duration (LOG . DOTS) or NIL, updating the parser's last-duration."
     (:bendafter . handle-bend)))
 
 (defun parse-post-events (p event)
-  (loop
-    (let ((tok (peek-token p)))
-      (when (null tok) (return))
-      (case (token-type tok)
-        (:articulation
-         (let* ((tok (advance-token p))
-                (spec (lookup-mark (token-value tok))))
-           (unless spec
-             (recover p 'skip-event "Unknown articulation ~S" (token-value tok)))
-           (push (make-mark spec) (event-attachments event))))
-        (:command
-         (let* ((cmd (token-value tok))
-                (spec (lookup-mark cmd))
-                (entry (assoc cmd +post-event-commands+)))
-           (cond (spec
-                  (advance-token p)
-                  ;; An absolute dynamic terminates an open hairpin.
-                  (when (serapeum:in (car spec) :dynamic :other-dynamics)
-                    (close-pending-wedge p event))
-                  (push (make-mark spec) (event-attachments event)))
-                 (entry
-                  (funcall (cdr entry) p event cmd))
-                 (t (return)))))
-        ((:attach-dash :attach-up :attach-down)
-         (advance-token p)
-         (parse-attached-mark p event))
-        (:slur-open
-         (advance-token p)
-         (let ((number (1+ (length (spanner p :slurs)))))
-           (push (cons nil number) (spanner p :slurs))
-           (push (make-slur number :start) (event-attachments event))))
-        (:slur-close
-         (advance-token p)
-         (let ((spec (pop (spanner p :slurs))))
-           (when spec
-             (push (make-slur (cdr spec) :stop) (event-attachments event)))))
-        (:phrase-open
-         (advance-token p)
-         (let ((number (1+ (length (spanner p :slurs)))))
-           (push (cons t number) (spanner p :slurs))
-           (push (make-slur number :start t) (event-attachments event))))
-        (:phrase-close
-         (advance-token p)
-         (let ((spec (pop (spanner p :slurs))))
-           (when spec
-             (push (make-slur (cdr spec) :stop t) (event-attachments event)))))
-        (:wedge-start
-         (advance-token p)
-         (close-pending-wedge p event)
-         (setf (spanner p :wedge) (cons (token-value tok) 1))
-         (push (make-wedge 1 (token-value tok)) (event-attachments event)))
-        (:wedge-stop
-         (advance-token p)
-         (close-pending-wedge p event))
-        (t (return)))))
+  (iter (for tok = (peek-token p))
+        (while tok)
+        (case (token-type tok)
+          (:articulation
+           (let* ((tok (advance-token p))
+                  (spec (lookup-mark (token-value tok))))
+             (unless spec
+               (recover p 'skip-event "Unknown articulation ~S" (token-value tok)))
+             (push (make-mark spec) (event-attachments event))))
+          (:command
+           (let* ((cmd (token-value tok))
+                  (spec (lookup-mark cmd))
+                  (entry (assoc cmd +post-event-commands+)))
+             (cond (spec
+                    (advance-token p)
+                    ;; An absolute dynamic terminates an open hairpin.
+                    (when (serapeum:in (car spec) :dynamic :other-dynamics)
+                      (close-pending-wedge p event))
+                    (push (make-mark spec) (event-attachments event)))
+                   (entry
+                    (funcall (cdr entry) p event cmd))
+                   (t (finish)))))
+          ((:attach-dash :attach-up :attach-down)
+           (advance-token p)
+           (parse-attached-mark p event))
+          (:slur-open
+           (advance-token p)
+           (let ((number (1+ (length (spanner p :slurs)))))
+             (push (cons nil number) (spanner p :slurs))
+             (push (make-slur number :start) (event-attachments event))))
+          (:slur-close
+           (advance-token p)
+           (let ((spec (pop (spanner p :slurs))))
+             (when spec
+               (push (make-slur (cdr spec) :stop) (event-attachments event)))))
+          (:phrase-open
+           (advance-token p)
+           (let ((number (1+ (length (spanner p :slurs)))))
+             (push (cons t number) (spanner p :slurs))
+             (push (make-slur number :start t) (event-attachments event))))
+          (:phrase-close
+           (advance-token p)
+           (let ((spec (pop (spanner p :slurs))))
+             (when spec
+               (push (make-slur (cdr spec) :stop t) (event-attachments event)))))
+          (:wedge-start
+           (advance-token p)
+           (close-pending-wedge p event)
+           (setf (spanner p :wedge) (cons (token-value tok) 1))
+           (push (make-wedge 1 (token-value tok)) (event-attachments event)))
+          (:wedge-stop
+           (advance-token p)
+           (close-pending-wedge p event))
+          (t (finish))))
   event)
 
 (defun close-pending-wedge (p event)
@@ -398,17 +397,16 @@ duration (LOG . DOTS) or NIL, updating the parser's last-duration."
   (advance-token p)  ; consume <
   (let ((entries nil)
         (first-pitch nil))
-    (loop
-      (let ((tok (peek-token p)))
-        (when (or (null tok) (eq (token-type tok) :chord-close)) (return))
-        (unless (eq (token-type tok) :pitch)
-          (recover p 'skip-event "Expected a pitch inside a chord"))
-        (let* ((tok (advance-token p))
-               (pitch (resolve-pitch-token p ctx (token-value tok)))
-               (tie-stop-p (pitch-in-pending p pitch))
-               (tie-start-p (consume-tie p)))
-          (unless first-pitch (setf first-pitch pitch))
-          (push (list pitch tie-stop-p tie-start-p) entries))))
+    (iter (for tok = (peek-token p))
+          (while (and tok (not (eq (token-type tok) :chord-close))))
+          (unless (eq (token-type tok) :pitch)
+            (recover p 'skip-event "Expected a pitch inside a chord"))
+          (let* ((tok (advance-token p))
+                 (pitch (resolve-pitch-token p ctx (token-value tok)))
+                 (tie-stop-p (pitch-in-pending p pitch))
+                 (tie-start-p (consume-tie p)))
+            (unless first-pitch (setf first-pitch pitch))
+            (push (list pitch tie-stop-p tie-start-p) entries)))
     (expect-token p :chord-close)
     ;; The chord is fully matched: drop any pending ties it did not consume.
     (setf (spanner-state-ties (parser-spanners p)) nil)
@@ -438,7 +436,7 @@ duration (LOG . DOTS) or NIL, updating the parser's last-duration."
                                    (setf (note-tie-start-p note) t)
                                    (push (pitch-key pitch) (spanner-state-ties (parser-spanners p))))
                                  note)))
-                            (nreverse entries))))
+                           (nreverse entries))))
       (let ((chord (make-chord notes duration (parser-staff p))))
         (setf (chord-voice chord) (parser-voice p))
         (dolist (n (chord-notes chord))
@@ -512,13 +510,12 @@ duration (LOG . DOTS) or NIL, updating the parser's last-duration."
 (defun skip-braced-block (p)
   (expect-token p :brace-open)
   (let ((depth 1))
-    (loop
-      (let ((tok (advance-token p)))
-        (when (null tok)
-          (parser-error p "Unterminated braced block"))
-        (cond ((eq (token-type tok) :brace-open) (incf depth))
-              ((eq (token-type tok) :brace-close) (decf depth))))
-      (when (zerop depth) (return)))))
+    (iter (for tok = (advance-token p))
+          (unless tok
+            (parser-error p "Unterminated braced block"))
+          (cond ((eq (token-type tok) :brace-open) (incf depth))
+                ((eq (token-type tok) :brace-close) (decf depth)))
+          (when (zerop depth) (finish)))))
 
 (defun parse-relative-block (p ctx)
   (expect-token p :brace-open)
@@ -550,10 +547,10 @@ duration (LOG . DOTS) or NIL, updating the parser's last-duration."
 
 (defun consume-voice-style-commands (p)
   "Consume and ignore \\voiceOne..\\oneVoice and style commands."
-  (loop while (and (peek-token p)
-                   (eq (token-type (peek-token p)) :command)
-                   (member (token-value (peek-token p)) +voice-style-commands+))
-        do (advance-token p)))
+  (iter (while (and (peek-token p)
+                    (eq (token-type (peek-token p)) :command)
+                    (member (token-value (peek-token p)) +voice-style-commands+)))
+        (advance-token p)))
 
 ;;; \new has been consumed.  Parse a context: Staff, PianoStaff, or Voice
 ;;; (each a bare capitalized word), with an optional `= "id"`.  Returns the
@@ -634,18 +631,15 @@ carry their own staff index)."
         (saved-duration (parser-last-duration p))
         (saved-voice (parser-voice p)))
     (unwind-protect
-         (serapeum:collecting
-           (let ((voice-number 1)
-                 (separator-seen nil)
-                 (new-seen nil))
-             (loop
-               (let* ((entry (parse-simultaneous-entry p ctx voice-number)))
+         (iter (with voice-number = 1)
+               (with separator-seen = nil)
+               (with new-seen = nil)
+               (let ((entry (parse-simultaneous-entry p ctx voice-number)))
                  (when (eq (car entry) :new)
                    (setf new-seen t))
-                 (dolist (e (cdr entry))
-                   (collect e)))
+                 (nconcing (cdr entry)))
                (let ((tok (peek-token p)))
-                 (when (null tok)
+                 (unless tok
                    (parser-error p "Unterminated simultaneous music"))
                  (case (token-type tok)
                    (:voice-separator
@@ -654,15 +648,14 @@ carry their own staff index)."
                     (incf voice-number))
                    (:simult-close
                     (advance-token p)
-                    (return))
+                    (finish))
                    (t (unless (and (eq (token-type tok) :command)
                                    (eq (token-value tok) :new))
                         (recover p 'skip-event
-                                 "Expected \\\\ or >> in simultaneous music"))))))
-             ;; Chord-forming << {a} {b} >> (no \\, no \new) is unsupported.
-             (unless (or separator-seen new-seen)
-               (recover p 'skip-command
-                        "Simultaneous music without \\\\ (chord-forming << >>) is not supported"))))
+                                 "Expected \\\\ or >> in simultaneous music")))))
+               (finally (unless (or separator-seen new-seen)
+                          (recover p 'skip-command
+                                   "Simultaneous music without \\\\ (chord-forming << >>) is not supported"))))
       (setf (parser-voice p) saved-voice)
       (setf (parser-spanners p) saved-spanners)
       (setf (parser-last-pitch p) saved-pitch)
@@ -680,57 +673,65 @@ carry their own staff index)."
           (t (cons :voice (parse-voice-expression p ctx voice-number))))))
 
 (defun parse-events (p ctx)
-  (serapeum:collecting
-    (loop do
-      (restart-case
-          (if-let ((tok (peek-token p)))
-            (case (token-type tok)
-              (:brace-close (return))
-              (:command
-               (advance-token p)
-               (case (token-value tok)
-                 (:relative (dolist (e (parse-relative p)) (collect e)))
-                 (:time (collect (parse-time-args p)))
-                 (:key (collect (parse-key-args p)))
-                 (:clef (collect (parse-clef-args p)))
-                 (:tempo (collect (parse-tempo-args p)))
-                 (:new (dolist (e (parse-new-command p ctx)) (collect e)))
-                 (:header (skip-braced-block p))
-                 (:layout (skip-braced-block p))
-                 (:paper (skip-braced-block p))
-                 (:midi (skip-braced-block p))
-                 (:breathe
-                  (when (parser-last-event p)
-                    (push (make-mark '(:articulation "breath-mark"))
-                          (event-attachments (parser-last-event p)))))
-                 (:arpeggioarrowup (setf (spanner-state-arpeggio (parser-spanners p)) :up))
-                 (:arpeggioarrowdown (setf (spanner-state-arpeggio (parser-spanners p)) :down))
-                 (:arpeggionormal (setf (spanner-state-arpeggio (parser-spanners p)) nil))
-                 (t (unless (member (token-value tok) +voice-style-commands+)
-                      (recover p 'skip-command "Unsupported command \\~A"
-                               (token-value tok))))))
-              (:simult-open
-               (advance-token p)
-               (dolist (e (parse-simultaneous p ctx)) (collect e)))
-              (:brace-open
-               (advance-token p)
-               (dolist (e (parse-events p ctx)) (collect e))
-               (expect-token p :brace-close))
-              (:barline (advance-token p)
-                        (collect (make-barline (parser-voice p) (parser-staff p))))
-              (:pitch (collect (track-last-event p (parse-note-event p ctx))))
-              (:rest (collect (track-last-event p (parse-rest-event p ctx))))
-              (:number (collect (track-last-event p (parse-duration-event p ctx))))
-              (:chord-open (collect (track-last-event p (parse-chord p ctx))))
-              (t (recover p 'skip-event "Unexpected ~S" (token-type tok))))
-            (return))
-        ;; Recovery: skip the offending construct and keep going.  SKIP-EVENT
-        ;; must advance past the unconsumed bad token; SKIP-COMMAND leaves the
-        ;; already-consumed command token behind.
-        (skip-event () (resync-to-event-start p t))
-        (skip-command () (resync-to-event-start p))
-        ;; Recovery: stop this events sequence and keep what was parsed so far.
-        (abort-parse () (throw 'abort-parse (collect)))))))
+  (iter (with new = nil)
+        (for tok = (peek-token p))
+        (while (and tok (not (eq (token-type tok) :brace-close))))
+        (setf new
+              (restart-case
+                  (case (token-type tok)
+                    (:command
+                     (advance-token p)
+                     (case (token-value tok)
+                       (:relative (parse-relative p))
+                       (:time (list (parse-time-args p)))
+                       (:key (list (parse-key-args p)))
+                       (:clef (list (parse-clef-args p)))
+                       (:tempo (list (parse-tempo-args p)))
+                       (:new (parse-new-command p ctx))
+                       (:header (skip-braced-block p))
+                       (:layout (skip-braced-block p))
+                       (:paper (skip-braced-block p))
+                       (:midi (skip-braced-block p))
+                       (:breathe
+                        (when (parser-last-event p)
+                          (push (make-mark '(:articulation "breath-mark"))
+                                (event-attachments (parser-last-event p))))
+                        nil)
+                       (:arpeggioarrowup
+                        (setf (spanner-state-arpeggio (parser-spanners p)) :up)
+                        nil)
+                       (:arpeggioarrowdown
+                        (setf (spanner-state-arpeggio (parser-spanners p)) :down)
+                        nil)
+                       (:arpeggionormal
+                        (setf (spanner-state-arpeggio (parser-spanners p)) nil)
+                        nil)
+                       (t (unless (member (token-value tok) +voice-style-commands+)
+                            (recover p 'skip-command "Unsupported command \\~A"
+                                     (token-value tok))))))
+                    (:simult-open
+                     (advance-token p)
+                     (parse-simultaneous p ctx))
+                    (:brace-open
+                     (advance-token p)
+                     (prog1 (parse-events p ctx)
+                       (expect-token p :brace-close)))
+                    (:barline (advance-token p)
+                              (list (make-barline (parser-voice p) (parser-staff p))))
+                    (:pitch (list (track-last-event p (parse-note-event p ctx))))
+                    (:rest (list (track-last-event p (parse-rest-event p ctx))))
+                    (:number (list (track-last-event p (parse-duration-event p ctx))))
+                    (:chord-open (list (track-last-event p (parse-chord p ctx))))
+                    (t (recover p 'skip-event "Unexpected ~S" (token-type tok))))
+                ;; Recovery: skip the offending construct and keep going.
+                ;; SKIP-EVENT must advance past the unconsumed bad token;
+                ;; SKIP-COMMAND leaves the already-consumed command token behind.
+                (skip-event () (resync-to-event-start p t))
+                (skip-command () (resync-to-event-start p))
+                ;; Recovery: stop this events sequence and keep what was parsed so far.
+                (abort-parse () (throw 'abort-parse events))))
+        (nconcing new into events)
+        (finally (return events))))
 
 (defun parse-top-level-form (p tok)
   (case (token-type tok)
@@ -757,15 +758,17 @@ carry their own staff index)."
 
 (defun parse-file-events (p)
   (catch 'abort-parse
-    (serapeum:collecting
-      (loop do
-        (restart-case
-            (if-let ((tok (peek-token p)))
-              (dolist (e (parse-top-level-form p tok)) (collect e))
-              (return))
-          ;; Recovery: skip an unsupported top-level command and its args.
-          (skip-command () (resync-command-args p))
-          ;; Recovery: skip one unconsumed unexpected token.
-          (skip-event () (resync-to-event-start p t))
-          ;; Recovery: stop parsing and hand back whatever was parsed so far.
-          (abort-parse () (throw 'abort-parse (collect))))))))
+    (iter (with new = nil)
+          (for tok = (peek-token p))
+          (while tok)
+          (setf new
+                (restart-case
+                    (parse-top-level-form p tok)
+                  ;; Recovery: skip an unsupported top-level command and its args.
+                  (skip-command () (resync-command-args p))
+                  ;; Recovery: skip one unconsumed unexpected token.
+                  (skip-event () (resync-to-event-start p t))
+                  ;; Recovery: stop parsing and hand back whatever was parsed so far.
+                  (abort-parse () (throw 'abort-parse events))))
+          (nconcing new into events)
+          (finally (return events)))))
