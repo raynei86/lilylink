@@ -183,37 +183,43 @@ to have a closing tag even when it has no children."
 (defun arpeggio-p (a) (typep a 'arpeggio))
 
 (defun emit-slurs (marks)
-  (mapcar (lambda (a)
-            (let ((number (if (slur-phrase-p a)
-                              (+ 100 (slur-number a))
-                              (slur-number a))))
-              (el :slur (:type (slur-action a) :number number))))
-          (remove-if-not #'slur-p marks)))
+  (filter-map (lambda (a)
+                (when (slur-p a)
+                  (let ((number (if (slur-phrase-p a)
+                                    (+ 100 (slur-number a))
+                                    (slur-number a))))
+                    (el :slur (:type (slur-action a) :number number)))))
+              marks))
 
 (defun emit-glissandos (marks)
-  (mapcar (lambda (a)
-            (el :glissando (:type (glissando-action a)
-                                  :number (glissando-number a))))
-          (remove-if-not #'glissando-p marks)))
+  (filter-map (lambda (a)
+                (when (glissando-p a)
+                  (el :glissando (:type (glissando-action a)
+                                        :number (glissando-number a)))))
+              marks))
 
 (defun emit-trills (marks)
-  (mapcar (lambda (a)
-            (el :ornaments nil
-                (when (eq (trill-action a) :start) (el :trill-mark nil))
-                (el :wavy-line (:type (trill-action a)
-                                      :number (trill-number a)))))
-          (remove-if-not #'trill-p marks)))
+  (filter-map (lambda (a)
+                (when (trill-p a)
+                  (el :ornaments nil
+                      (when (eq (trill-action a) :start) (el :trill-mark nil))
+                      (el :wavy-line (:type (trill-action a)
+                                            :number (trill-number a))))))
+              marks))
 
 (defun emit-arpeggios (marks)
-  (mapcar (lambda (a)
-            (if (arpeggio-direction a)
-                (el :arpeggiate (:direction (arpeggio-direction a)))
-                (el :arpeggiate nil)))
-          (remove-if-not #'arpeggio-p marks)))
+  (filter-map (lambda (a)
+                (when (arpeggio-p a)
+                  (if (arpeggio-direction a)
+                      (el :arpeggiate (:direction (arpeggio-direction a)))
+                      (el :arpeggiate nil))))
+              marks))
 
 (defun emit-fermatas (marks)
-  (mapcar (lambda (a) (build-el :fermata (mark-attr-pairs a) nil))
-          (remove-if-not #'fermata-p marks)))
+  (filter-map (lambda (a)
+                (when (fermata-p a)
+                  (build-el :fermata (mark-attr-pairs a) nil)))
+              marks))
 
 ;;; Marks are grouped into their containers in a fixed order.
 (defparameter +mark-container-order+
@@ -316,12 +322,13 @@ to have a closing tag even when it has no children."
 
 (defun emit-wedges (event)
   "Hairpin <direction> elements attached to EVENT."
-  (loop for a in (event-attachments event)
-        when (typep a 'wedge)
-        collect (el :direction (:placement "above")
-                    (el :direction-type nil
-                        (el :wedge (:type (wedge-type a)
-                                         :number (wedge-number a)))))))
+  (filter-map (lambda (a)
+                (when (typep a 'wedge)
+                  (el :direction (:placement "above")
+                      (el :direction-type nil
+                          (el :wedge (:type (wedge-type a)
+                                           :number (wedge-number a)))))))
+              (event-attachments event)))
 
 ;;; MusicXML places standalone dynamics inside a <dynamics> container within
 ;;; <direction-type>, as <direction> siblings of the note.
@@ -332,17 +339,18 @@ to have a closing tag even when it has no children."
 (defun emit-dynamics (event)
   "Standalone dynamic marks (\\f, \\mf, \\sff, ...) attached to EVENT as
 <direction> elements (standard placement, siblings of the note)."
-  (loop for mark in (event-attachments event)
-        when (and (typep mark 'mark)
-                  (member (mark-kind mark) '(:dynamic :other-dynamics)))
-        collect (el :direction (:placement "above")
-                    (el :direction-type nil
-                        (el (intern (string-upcase
-                                     (assocdr (mark-kind mark)
-                                                 +direction-container+))
-                                    "KEYWORD")
-                            nil
-                            (emit-mark mark))))))
+  (filter-map (lambda (mark)
+                (when (and (typep mark 'mark)
+                           (member (mark-kind mark) '(:dynamic :other-dynamics)))
+                  (el :direction (:placement "above")
+                      (el :direction-type nil
+                          (el (intern (string-upcase
+                                       (assocdr (mark-kind mark)
+                                                +direction-container+))
+                                      "KEYWORD")
+                              nil
+                              (emit-mark mark))))))
+              (event-attachments event)))
 
 ;;; A tempo marking is a <direction> with an optional <words>, <metronome>,
 ;;; and <sound tempo>.
