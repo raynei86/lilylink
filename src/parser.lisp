@@ -212,7 +212,7 @@ duration (LOG . DOTS) or NIL, updating the parser's last-duration."
     (let* ((cmd (token-value tok))
            (spec (lookup-mark cmd)))
       (advance-token p)
-      (when (member (car spec) '(:dynamic :other-dynamics))
+      (when (in (car spec) :dynamic :other-dynamics)
         (close-pending-wedge p event))
       (push (make-mark spec) (event-attachments event)))))
 
@@ -288,7 +288,7 @@ duration (LOG . DOTS) or NIL, updating the parser's last-duration."
            (cond (spec
                   (advance-token p)
                   ;; An absolute dynamic terminates an open hairpin.
-                  (when (member (car spec) '(:dynamic :other-dynamics))
+                  (when (in (car spec) :dynamic :other-dynamics)
                     (close-pending-wedge p event))
                   (push (make-mark spec) (event-attachments event)))
                  (entry
@@ -474,7 +474,7 @@ duration (LOG . DOTS) or NIL, updating the parser's last-duration."
   (let* ((pitch-tok (expect-token p :pitch))
          (mode-tok (expect-token p :command))
          (mode (token-value mode-tok)))
-    (unless (member mode '(:major :minor))
+    (unless (in mode :major :minor)
       (recover p 'skip-command "Unsupported key mode \\~A" mode))
     (let ((pt (token-value pitch-tok)))
       (make-key-change (make-pitch (pitch-token-step pt)

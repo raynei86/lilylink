@@ -340,9 +340,9 @@ to have a closing tag even when it has no children."
   "Standalone dynamic marks (\\f, \\mf, \\sff, ...) attached to EVENT as
 <direction> elements (standard placement, siblings of the note)."
   (filter-map (lambda (mark)
-                (when (and (typep mark 'mark)
-                           (member (mark-kind mark) '(:dynamic :other-dynamics)))
-                  (el :direction (:placement "above")
+(when (and (typep mark 'mark)
+                            (in (mark-kind mark) :dynamic :other-dynamics))
+                   (el :direction (:placement "above")
                       (el :direction-type nil
                           (el (intern (string-upcase
                                        (assocdr (mark-kind mark)
