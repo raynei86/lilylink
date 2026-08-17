@@ -209,9 +209,9 @@ moved into the mark's text slot."
 (deftype musical-event ()
   '(or note rest-event chord))
 
-(defparameter +pitch-step-letters+ "cdefgab")
+(defconst +pitch-step-letters+ "cdefgab")
 
-(defparameter +max-duration-log+ 10
+(defconst +max-duration-log+ 10
   "Largest supported duration log2 (whole=0 .. 1024th=10).")
 
 (defun pitch-step-letter (step)

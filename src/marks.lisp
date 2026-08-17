@@ -6,7 +6,7 @@
 ;;; :text entry used for other-* marks.  KIND determines which MusicXML
 ;;; container the mark is emitted into.
 
-(defparameter +mark-commands+
+(defconst +mark-commands+
   '((:accent . (:articulation "accent"))
     (:marcato . (:articulation "strong-accent"))
     (:staccato . (:articulation "staccato"))

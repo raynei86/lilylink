@@ -90,11 +90,11 @@ to have a closing tag even when it has no children."
     `(build-el ,tag (list ,@(nreverse attr-forms)) (list ,@body)
                ,open-close)))
 
-(defparameter +duration-type-names+
+(defconst +duration-type-names+
   #("whole" "half" "quarter" "eighth" "16th" "32nd" "64th"
     "128th" "256th" "512th" "1024th" "2048th" "4096th"))
 
-(defparameter +clef-signs+
+(defconst +clef-signs+
   '((:treble "G" 2) (:alto "C" 3) (:tenor "C" 4) (:bass "F" 4)))
 
 ;;; When non-NIL, every note/rest carries a <voice> element (polyphonic
@@ -147,7 +147,7 @@ to have a closing tag even when it has no children."
 ;;; Each (KIND . CONTAINER) pair says which <notations> container a mark of a
 ;;; given kind is emitted into.  Standalone dynamics are handled separately as
 ;;; <direction> elements (see EMIT-DYNAMICS).
-(defparameter +mark-container+
+(defconst +mark-container+
   '((:articulation . "articulations")
     (:other-articulation . "articulations")
     (:ornament . "ornaments")
@@ -222,7 +222,7 @@ to have a closing tag even when it has no children."
               marks))
 
 ;;; Marks are grouped into their containers in a fixed order.
-(defparameter +mark-container-order+
+(defconst +mark-container-order+
   '("ornaments" "technical" "articulations"))
 
 (defun emit-mark-containers (marks)
@@ -332,7 +332,7 @@ to have a closing tag even when it has no children."
 
 ;;; MusicXML places standalone dynamics inside a <dynamics> container within
 ;;; <direction-type>, as <direction> siblings of the note.
-(defparameter +direction-container+
+(defconst +direction-container+
   '((:dynamic . "dynamics")
     (:other-dynamics . "dynamics")))
 

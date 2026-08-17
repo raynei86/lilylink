@@ -90,7 +90,7 @@
 
 ;;; Token types that can start a fresh event/form, used by the recovery
 ;;; restarts to resynchronize after skipping past a bad construct.
-(defparameter +event-start-types+
+(defconst +event-start-types+
   '(:pitch :rest :chord-open :number :barline :brace-close
     :simult-close :voice-separator :command))
 
@@ -259,7 +259,7 @@ duration (LOG . DOTS) or NIL, updating the parser's last-duration."
 ;;; Special post-event commands (those that do more than attach a plain mark),
 ;;; dispatched by keyword from parse-post-events.  Each handler consumes its
 ;;; own command token and mutates the parser/event.
-(defparameter +post-event-commands+
+(defconst +post-event-commands+
   '((:cr . handle-hairpin)
     (:decr . handle-hairpin)
     (:endcr . handle-hairpin-stop)
@@ -543,7 +543,7 @@ duration (LOG . DOTS) or NIL, updating the parser's last-duration."
     (expect-token p :brace-close)
     events))
 
-(defparameter +voice-style-commands+
+(defconst +voice-style-commands+
   '(:voiceone :voicetwo :voicethree :voicefour :onevoice
     :voiceonestyle :voicetwostyle :voicethreestyle :voicefourstyle
     :voiceneutralstyle))
