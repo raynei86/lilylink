@@ -1,12 +1,10 @@
 (uiop:define-package lilylink
-  (:use #:cl)
+  (:use #:cl #:iterate)
   (:import-from #:alexandria #:when-let #:if-let)
   (:import-from #:serapeum #:etypecase-of
                             #:assocdr
                             #:ensure
-                            #:collecting
                             #:filter-map
-                            #:in
                             #:defconst)
   (:export #:convert-string
            #:convert-file

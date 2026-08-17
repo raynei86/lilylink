@@ -4,7 +4,8 @@
   :mailto "zlihui486@gmail.com"
   :license "GPLv3"
   :depends-on ("alexandria"
-               "serapeum")
+               "serapeum"
+               "iterate")
   :components ((:module "src"
                 :components
                 ((:file "main")

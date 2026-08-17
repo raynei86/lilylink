@@ -341,7 +341,7 @@ to have a closing tag even when it has no children."
 <direction> elements (standard placement, siblings of the note)."
   (filter-map (lambda (mark)
 (when (and (typep mark 'mark)
-                            (in (mark-kind mark) :dynamic :other-dynamics))
+                            (serapeum:in (mark-kind mark) :dynamic :other-dynamics))
                    (el :direction (:placement "above")
                       (el :direction-type nil
                           (el (intern (string-upcase
