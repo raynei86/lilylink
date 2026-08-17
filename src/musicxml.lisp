@@ -76,6 +76,15 @@ mapcar) contributes its elements directly."
                        c
                        (list c)))))
 
+(defmacro selecting ((var) list predicate &body body)
+  "Apply BODY to each element of LIST that satisfies PREDICATE, collecting the
+non-NIL results (a shorthand for `(filter-map (lambda (VAR) (when PREDICATE
+BODY)) LIST)')."
+  `(filter-map (lambda (,var)
+                 (when ,predicate
+                   ,@body))
+               ,list))
+
 (defmacro el (tag attrs &rest children)
   "Build an XML element.  TAG is a keyword naming the element; ATTRS is an
 attribute plist whose keys are literal keywords and whose values are
@@ -183,43 +192,33 @@ to have a closing tag even when it has no children."
 (defun arpeggio-p (a) (typep a 'arpeggio))
 
 (defun emit-slurs (marks)
-  (filter-map (lambda (a)
-                (when (slur-p a)
-                  (let ((number (if (slur-phrase-p a)
-                                    (+ 100 (slur-number a))
-                                    (slur-number a))))
-                    (el :slur (:type (slur-action a) :number number)))))
-              marks))
+  (selecting (a) marks (slur-p a)
+    (let ((number (if (slur-phrase-p a)
+                      (+ 100 (slur-number a))
+                      (slur-number a))))
+      (el :slur (:type (slur-action a) :number number)))))
 
 (defun emit-glissandos (marks)
-  (filter-map (lambda (a)
-                (when (glissando-p a)
-                  (el :glissando (:type (glissando-action a)
-                                        :number (glissando-number a)))))
-              marks))
+  (selecting (a) marks (glissando-p a)
+    (el :glissando (:type (glissando-action a)
+                          :number (glissando-number a)))))
 
 (defun emit-trills (marks)
-  (filter-map (lambda (a)
-                (when (trill-p a)
-                  (el :ornaments nil
-                      (when (eq (trill-action a) :start) (el :trill-mark nil))
-                      (el :wavy-line (:type (trill-action a)
-                                            :number (trill-number a))))))
-              marks))
+  (selecting (a) marks (trill-p a)
+    (el :ornaments nil
+        (when (eq (trill-action a) :start) (el :trill-mark nil))
+        (el :wavy-line (:type (trill-action a)
+                              :number (trill-number a))))))
 
 (defun emit-arpeggios (marks)
-  (filter-map (lambda (a)
-                (when (arpeggio-p a)
-                  (if (arpeggio-direction a)
-                      (el :arpeggiate (:direction (arpeggio-direction a)))
-                      (el :arpeggiate nil))))
-              marks))
+  (selecting (a) marks (arpeggio-p a)
+    (if (arpeggio-direction a)
+        (el :arpeggiate (:direction (arpeggio-direction a)))
+        (el :arpeggiate nil))))
 
 (defun emit-fermatas (marks)
-  (filter-map (lambda (a)
-                (when (fermata-p a)
-                  (build-el :fermata (mark-attr-pairs a) nil)))
-              marks))
+  (selecting (a) marks (fermata-p a)
+    (build-el :fermata (mark-attr-pairs a) nil)))
 
 ;;; Marks are grouped into their containers in a fixed order.
 (defconst +mark-container-order+
@@ -284,12 +283,6 @@ to have a closing tag even when it has no children."
 (defun emit-dots (dots)
   (iter (repeat dots) (collect (el :dot nil))))
 
-(defun emit-duration (duration divisions)
-  (append
-   (list (el :duration nil (duration-in-divisions duration divisions))
-         (el :type nil (duration-type-name (duration-log duration))))
-   (emit-dots (duration-dots duration))))
-
 (defun emit-note (note divisions &optional chord-p extra)
   (el :note nil
       (when chord-p (el :chord nil))
@@ -322,13 +315,11 @@ to have a closing tag even when it has no children."
 
 (defun emit-wedges (event)
   "Hairpin <direction> elements attached to EVENT."
-  (filter-map (lambda (a)
-                (when (typep a 'wedge)
-                  (el :direction (:placement "above")
-                      (el :direction-type nil
-                          (el :wedge (:type (wedge-type a)
-                                           :number (wedge-number a)))))))
-              (event-attachments event)))
+  (selecting (a) (event-attachments event) (typep a 'wedge)
+    (el :direction (:placement "above")
+        (el :direction-type nil
+            (el :wedge (:type (wedge-type a)
+                             :number (wedge-number a)))))))
 
 ;;; MusicXML places standalone dynamics inside a <dynamics> container within
 ;;; <direction-type>, as <direction> siblings of the note.
@@ -339,18 +330,17 @@ to have a closing tag even when it has no children."
 (defun emit-dynamics (event)
   "Standalone dynamic marks (\\f, \\mf, \\sff, ...) attached to EVENT as
 <direction> elements (standard placement, siblings of the note)."
-  (filter-map (lambda (mark)
-(when (and (typep mark 'mark)
-                            (serapeum:in (mark-kind mark) :dynamic :other-dynamics))
-                   (el :direction (:placement "above")
-                      (el :direction-type nil
-                          (el (intern (string-upcase
-                                       (assocdr (mark-kind mark)
-                                                +direction-container+))
-                                      "KEYWORD")
-                              nil
-                              (emit-mark mark))))))
-              (event-attachments event)))
+  (selecting (mark) (event-attachments event)
+      (and (typep mark 'mark)
+           (serapeum:in (mark-kind mark) :dynamic :other-dynamics))
+    (el :direction (:placement "above")
+        (el :direction-type nil
+            (el (intern (string-upcase
+                         (assocdr (mark-kind mark)
+                                  +direction-container+))
+                        "KEYWORD")
+                nil
+                (emit-mark mark))))))
 
 ;;; A tempo marking is a <direction> with an optional <words>, <metronome>,
 ;;; and <sound tempo>.
@@ -415,7 +405,6 @@ to have a closing tag even when it has no children."
         (append
          (mapcar #'emit-tempo directions)
          (iter (for group in groups)
-               (for total in totals)
                (for i from 0)
                (appending (append (when (plusp i)
                                     (list (el :backup nil
@@ -447,8 +436,7 @@ note-attached directions follow their note)."
         (staves (score-staves score)))
     (let ((xml (el :score-partwise (:version "3.1")
                    (el :part-list nil
-                       (iter (for staff in staves)
-                             (for id from 1)
+                       (iter (for id from 1 to (length staves))
                              (collect (el :score-part (:id (format nil "P~D" id))
                                           (el :part-name nil "Music"))))
                    (iter (for staff in staves)

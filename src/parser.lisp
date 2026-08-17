@@ -69,6 +69,11 @@
   (prog1 (peek-token p)
     (incf (parser-pos p))))
 
+(defun peek-type-p (p &rest types)
+  "Whether the token at the parser's position has one of TYPES (or EOF)."
+  (let ((tok (peek-token p)))
+    (and tok (member (token-type tok) types))))
+
 (defun token-line-or-0 (tok)
   (if tok (token-line tok) 0))
 
@@ -131,7 +136,7 @@ at the next top-level construct."
                     (member (token-type (peek-token p))
                             '(:pitch :rest :number :word :slash :string))))
         (advance-token p))
-  (when (and (peek-token p) (eq (token-type (peek-token p)) :brace-open))
+  (when (peek-type-p p :brace-open)
     (skip-braced-block p)))
 
 ;;; Push EVENT onto the accumulating list, record it as the parser's last event
@@ -343,13 +348,12 @@ duration (LOG . DOTS) or NIL, updating the parser's last-duration."
 (defun parse-bend-args (p event)
   ;; \bendAfter has been consumed.  Read the interval; only its sign matters.
   (let ((sign 1))
-    (when (and (peek-token p)
-               (eq (token-type (peek-token p)) :attach-dash))
+    (when (peek-type-p p :attach-dash)
       (advance-token p)
       (setf sign -1))
-    (when (and (peek-token p) (eq (token-type (peek-token p)) :number))
+    (when (peek-type-p p :number)
       (advance-token p))
-    (when (and (peek-token p) (eq (token-type (peek-token p)) :number))
+    (when (peek-type-p p :number)
       (advance-token p))
     (push (make-mark (if (minusp sign)
                          '(:articulation "falloff")
@@ -458,11 +462,11 @@ duration (LOG . DOTS) or NIL, updating the parser's last-duration."
   (let ((text nil)
         (beat-unit nil)
         (per-minute nil))
-    (when (and (peek-token p) (eq (token-type (peek-token p)) :string))
+    (when (peek-type-p p :string)
       (setf text (token-value (advance-token p))))
-    (when (and (peek-token p) (eq (token-type (peek-token p)) :number))
+    (when (peek-type-p p :number)
       (setf beat-unit (car (token-value (advance-token p))))
-      (when (and (peek-token p) (eq (token-type (peek-token p)) :equals))
+      (when (peek-type-p p :equals)
         (advance-token p)
         (setf per-minute (car (token-value (expect-token p :number))))))
     (make-tempo-change :text text :beat-unit beat-unit :per-minute per-minute
@@ -517,7 +521,8 @@ duration (LOG . DOTS) or NIL, updating the parser's last-duration."
                 ((eq (token-type tok) :brace-close) (decf depth)))
           (when (zerop depth) (finish)))))
 
-(defun parse-relative-block (p ctx)
+(defun parse-brace-block (p ctx)
+  "Consume a braced music block: expects \\{, parses EVENTS, expects \\}."
   (expect-token p :brace-open)
   (let ((events (parse-events p ctx)))
     (expect-token p :brace-close)
@@ -528,17 +533,11 @@ duration (LOG . DOTS) or NIL, updating the parser's last-duration."
   (let ((tok (peek-token p)))
     (if (and tok (eq (token-type tok) :pitch))
         (let ((pt (token-value (advance-token p))))
-          (parse-relative-block p
-                                (make-rel-ctx (make-pitch (pitch-token-step pt)
-                                                          :alter (pitch-token-alter pt)
-                                                          :octave (+ 3 (pitch-token-octave-mark pt))))))
-        (parse-relative-block p (make-rel-ctx :unset)))))
-
-(defun parse-score (p)
-  (expect-token p :brace-open)
-  (let ((events (parse-events p nil)))
-    (expect-token p :brace-close)
-    events))
+          (parse-brace-block p
+                             (make-rel-ctx (make-pitch (pitch-token-step pt)
+                                                       :alter (pitch-token-alter pt)
+                                                       :octave (+ 3 (pitch-token-octave-mark pt))))))
+        (parse-brace-block p (make-rel-ctx :unset)))))
 
 (defconst +voice-style-commands+
   '(:voiceone :voicetwo :voicethree :voicefour :onevoice
@@ -562,9 +561,9 @@ duration (LOG . DOTS) or NIL, updating the parser's last-duration."
     (let ((type (intern (string-upcase (token-value type-tok)) "KEYWORD")))
       (advance-token p)
       ;; Skip an optional `= "id"`.
-      (when (and (peek-token p) (eq (token-type (peek-token p)) :equals))
+      (when (peek-type-p p :equals)
         (advance-token p)
-        (when (and (peek-token p) (eq (token-type (peek-token p)) :string))
+        (when (peek-type-p p :string)
           (advance-token p)))
       (case type
         (:staff
@@ -587,9 +586,7 @@ duration (LOG . DOTS) or NIL, updating the parser's last-duration."
   (let ((tok (peek-token p)))
     (case (token-type tok)
       (:brace-open
-       (advance-token p)
-       (prog1 (parse-events p ctx)
-         (expect-token p :brace-close)))
+       (parse-brace-block p ctx))
       (:command
        (case (token-value tok)
          (:relative (advance-token p) (parse-relative p))
@@ -607,9 +604,7 @@ duration (LOG . DOTS) or NIL, updating the parser's last-duration."
   (let ((tok (peek-token p)))
     (case (token-type tok)
       (:brace-open
-       (advance-token p)
-       (prog1 (parse-events p ctx)
-         (expect-token p :brace-close)))
+       (parse-brace-block p ctx))
       (:command
        (case (token-value tok)
          (:relative (advance-token p) (parse-relative p))
@@ -713,9 +708,7 @@ carry their own staff index)."
                      (advance-token p)
                      (parse-simultaneous p ctx))
                     (:brace-open
-                     (advance-token p)
-                     (prog1 (parse-events p ctx)
-                       (expect-token p :brace-close)))
+                     (parse-brace-block p ctx))
                     (:barline (advance-token p)
                               (list (make-barline (parser-voice p) (parser-staff p))))
                     (:pitch (list (track-last-event p (parse-note-event p ctx))))
@@ -746,14 +739,12 @@ carry their own staff index)."
        (:paper (skip-braced-block p) nil)
        (:midi (skip-braced-block p) nil)
        (:relative (parse-relative p))
-       (:score (parse-score p))
+       (:score (parse-brace-block p nil))
        (:new (parse-new-command p nil))
        (t (recover p 'skip-command "Unsupported top-level command \\~A"
                    (token-value tok)))))
     (:brace-open
-     (advance-token p)
-     (prog1 (parse-events p nil)
-       (expect-token p :brace-close)))
+     (parse-brace-block p nil))
     (t (recover p 'skip-event "Unexpected ~S at top level" (token-type tok)))))
 
 (defun parse-file-events (p)
