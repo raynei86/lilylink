@@ -223,6 +223,6 @@ moved into the mark's text slot."
 ;;; Duration value in whole-note units (exact rationals).
 (defun duration-value (duration)
   (let ((base (expt 2 (- (duration-log duration)))))
-    (loop for i from 1 to (duration-dots duration)
-          sum (/ base (expt 2 i)) into extra
-          finally (return (+ base extra)))))
+    (iter (for i from 1 to (duration-dots duration))
+          (sum (/ base (expt 2 i)) into extra)
+          (finally (return (+ base extra))))))

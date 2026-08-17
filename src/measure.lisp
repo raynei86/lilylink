@@ -49,8 +49,8 @@ ordered by staff number."
   (let ((table (make-hash-table)))
     (dolist (ev events)
       (push ev (gethash (event-staff-of ev) table)))
-    (sort (loop for staff being the hash-keys of table
-                collect (cons staff (nreverse (gethash staff table))))
+    (sort (iter (for (staff ev) in-hashtable table)
+                (collect (cons staff (nreverse ev))))
           #'< :key #'car)))
 
 ;;; Build one STAFF object from EVENTS, which must all carry STAFF-INDEX.
@@ -112,9 +112,9 @@ ordered by staff number."
          (place-note-pieces (pitch pieces first-p last-p src-start src-stop
                                    first-atts last-atts voice)
            (let ((np (length pieces)))
-             (loop for piece in pieces
-                   for j from 0
-                   do (destructuring-bind (log . dots) piece
+             (iter (for piece in pieces)
+                   (for j from 0)
+                   (destructuring-bind (log . dots) piece
                         (let* ((has-prev (not (and first-p (zerop j))))
                                (has-next (not (and last-p (= (1+ j) np))))
                                (dur (make-duration log :dots dots))
@@ -141,18 +141,18 @@ ordered by staff number."
                        (src-stop (note-tie-stop-p note))
                        (atts (event-attachments note))
                        (nchunks (length chunks)))
-                   (loop for chunk in chunks
-                         for i from 0
-                         do (place-note-pieces pitch
-                                               (decompose-units chunk divisions)
-                                               (zerop i)
-                                               (= (1+ i) nchunks)
-                                               src-start src-stop
-                                               (remove-if #'attachment-stop-p atts)
-                                               (remove-if-not #'attachment-stop-p atts)
-                                               voice)
-                            (unless (= (1+ i) nchunks)
-                              (advance-voice voice)))))))
+                   (iter (for chunk in chunks)
+                         (for i from 0)
+                         (place-note-pieces pitch
+                                            (decompose-units chunk divisions)
+                                            (zerop i)
+                                            (= (1+ i) nchunks)
+                                            src-start src-stop
+                                            (remove-if #'attachment-stop-p atts)
+                                            (remove-if-not #'attachment-stop-p atts)
+                                            voice)
+                         (unless (= (1+ i) nchunks)
+                           (advance-voice voice)))))))
 
          (place-rest (rest-event voice)
            (let* ((value (duration-units (rest-duration rest-event) divisions))
@@ -160,16 +160,16 @@ ordered by staff number."
                   (chunks (measure-chunks value remaining measure-cap)))
              (if (null (rest chunks))
                  (push-event rest-event (rest-duration rest-event) voice)
-                 (loop for chunk in chunks
-                       for i from 0
-                       do (dolist (piece (decompose-units chunk divisions))
-                            (destructuring-bind (log . dots) piece
-                              (let* ((dur (make-duration log :dots dots))
-                                     (r (make-rest dur staff-index)))
-                                (setf (rest-voice r) voice)
-                                (push-event r dur voice))))
-                          (unless (= (1+ i) (length chunks))
-                            (advance-voice voice))))))
+                 (iter (for chunk in chunks)
+                       (for i from 0)
+                       (dolist (piece (decompose-units chunk divisions))
+                         (destructuring-bind (log . dots) piece
+                           (let* ((dur (make-duration log :dots dots))
+                                  (r (make-rest dur staff-index)))
+                             (setf (rest-voice r) voice)
+                             (push-event r dur voice))))
+                       (unless (= (1+ i) (length chunks))
+                         (advance-voice voice))))))
 
          (place-chord (chord voice)
            (let* ((value (duration-units (chord-duration chord) divisions))
@@ -180,12 +180,12 @@ ordered by staff number."
                  (let ((notes (chord-notes chord))
                        (atts (event-attachments chord))
                        (nchunks (length chunks)))
-                   (loop for chunk in chunks
-                         for i from 0
-                         do (let ((pieces (decompose-units chunk divisions)))
-                              (loop for piece in pieces
-                                    for j from 0
-                                    do (destructuring-bind (log . dots) piece
+                   (iter (for chunk in chunks)
+                         (for i from 0)
+                         (let ((pieces (decompose-units chunk divisions)))
+                           (iter (for piece in pieces)
+                                 (for j from 0)
+                                 (destructuring-bind (log . dots) piece
                                          (let* ((has-prev (not (and (zerop i) (zerop j))))
                                                 (has-next (not (and (= (1+ i) nchunks)
                                                                     (= (1+ j) (length pieces)))))
