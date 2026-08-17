@@ -136,9 +136,10 @@ at the next top-level construct."
 
 ;;; Push EVENT onto the accumulating list, record it as the parser's last event
 ;;; (used by \breathe), and return the updated list so callers can setf it.
-(defun accumulate-event (p events event)
+
+(defun track-last-event (p event)
   (setf (parser-last-event p) event)
-  (cons event events))
+  event)
 
 ;;; Relative octave placement: choose the octave that minimizes the
 ;;; diatonic interval (ignoring accidentals) between the target step and
@@ -633,36 +634,35 @@ carry their own staff index)."
         (saved-duration (parser-last-duration p))
         (saved-voice (parser-voice p)))
     (unwind-protect
-         (let ((voices nil)
-               (voice-number 1)
-               (separator-seen nil))
-            (loop
-              (push (parse-simultaneous-entry p ctx voice-number) voices)
-              (let ((tok (peek-token p)))
-                (when (null tok)
-                  (parser-error p "Unterminated simultaneous music"))
-                (case (token-type tok)
-                  (:voice-separator
-                   (advance-token p)
-                   (setf separator-seen t)
-                   (incf voice-number))
-                  (:simult-close
-                   (advance-token p)
-                   (return))
-                  (t (unless (and (eq (token-type tok) :command)
-                                  (eq (token-value tok) :new))
-                       (recover p 'skip-event
-                                "Expected \\\\ or >> in simultaneous music"))))))
-            ;; Chord-forming << {a} {b} >> (no \\, no \new) is unsupported.
-            (unless (or separator-seen
-                        (some (lambda (entry)
-                                (and (consp entry) (eq (car entry) :new)))
-                              voices))
-              (recover p 'skip-command
-                       "Simultaneous music without \\\\ (chord-forming << >>) is not supported"))
-            (apply #'nconc
-                   (mapcar (lambda (entry) (cdr entry))
-                           (nreverse voices))))
+         (collecting
+           (let ((voice-number 1)
+                 (separator-seen nil)
+                 (new-seen nil))
+             (loop
+               (let* ((entry (parse-simultaneous-entry p ctx voice-number)))
+                 (when (eq (car entry) :new)
+                   (setf new-seen t))
+                 (dolist (e (cdr entry))
+                   (collect e)))
+               (let ((tok (peek-token p)))
+                 (when (null tok)
+                   (parser-error p "Unterminated simultaneous music"))
+                 (case (token-type tok)
+                   (:voice-separator
+                    (advance-token p)
+                    (setf separator-seen t)
+                    (incf voice-number))
+                   (:simult-close
+                    (advance-token p)
+                    (return))
+                   (t (unless (and (eq (token-type tok) :command)
+                                   (eq (token-value tok) :new))
+                        (recover p 'skip-event
+                                 "Expected \\\\ or >> in simultaneous music"))))))
+             ;; Chord-forming << {a} {b} >> (no \\, no \new) is unsupported.
+             (unless (or separator-seen new-seen)
+               (recover p 'skip-command
+                        "Simultaneous music without \\\\ (chord-forming << >>) is not supported"))))
       (setf (parser-voice p) saved-voice)
       (setf (parser-spanners p) saved-spanners)
       (setf (parser-last-pitch p) saved-pitch)
@@ -680,7 +680,7 @@ carry their own staff index)."
           (t (cons :voice (parse-voice-expression p ctx voice-number))))))
 
 (defun parse-events (p ctx)
-  (let ((events nil))
+  (collecting
     (loop do
       (restart-case
           (if-let ((tok (peek-token p)))
@@ -689,12 +689,12 @@ carry their own staff index)."
               (:command
                (advance-token p)
                (case (token-value tok)
-                 (:relative (setf events (nreconc (parse-relative p) events)))
-                 (:time (push (parse-time-args p) events))
-                 (:key (push (parse-key-args p) events))
-                 (:clef (push (parse-clef-args p) events))
-                 (:tempo (push (parse-tempo-args p) events))
-                 (:new (setf events (nreconc (parse-new-command p ctx) events)))
+                 (:relative (dolist (e (parse-relative p)) (collect e)))
+                 (:time (collect (parse-time-args p)))
+                 (:key (collect (parse-key-args p)))
+                 (:clef (collect (parse-clef-args p)))
+                 (:tempo (collect (parse-tempo-args p)))
+                 (:new (dolist (e (parse-new-command p ctx)) (collect e)))
                  (:header (skip-braced-block p))
                  (:layout (skip-braced-block p))
                  (:paper (skip-braced-block p))
@@ -711,16 +711,17 @@ carry their own staff index)."
                                (token-value tok))))))
               (:simult-open
                (advance-token p)
-               (setf events (nreconc (parse-simultaneous p ctx) events)))
+               (dolist (e (parse-simultaneous p ctx)) (collect e)))
               (:brace-open
                (advance-token p)
-               (prog1 (setf events (nreconc (parse-events p ctx) events))
-                 (expect-token p :brace-close)))
-              (:barline (advance-token p) (push (make-barline (parser-voice p) (parser-staff p)) events))
-              (:pitch (setf events (accumulate-event p events (parse-note-event p ctx))))
-              (:rest (setf events (accumulate-event p events (parse-rest-event p ctx))))
-              (:number (setf events (accumulate-event p events (parse-duration-event p ctx))))
-              (:chord-open (setf events (accumulate-event p events (parse-chord p ctx))))
+               (dolist (e (parse-events p ctx)) (collect e))
+               (expect-token p :brace-close))
+              (:barline (advance-token p)
+                        (collect (make-barline (parser-voice p) (parser-staff p))))
+              (:pitch (collect (track-last-event p (parse-note-event p ctx))))
+              (:rest (collect (track-last-event p (parse-rest-event p ctx))))
+              (:number (collect (track-last-event p (parse-duration-event p ctx))))
+              (:chord-open (collect (track-last-event p (parse-chord p ctx))))
               (t (recover p 'skip-event "Unexpected ~S" (token-type tok))))
             (return))
         ;; Recovery: skip the offending construct and keep going.  SKIP-EVENT
@@ -729,8 +730,7 @@ carry their own staff index)."
         (skip-event () (resync-to-event-start p t))
         (skip-command () (resync-to-event-start p))
         ;; Recovery: stop this events sequence and keep what was parsed so far.
-        (abort-parse () (throw 'abort-parse (nreverse events)))))
-    (nreverse events)))
+        (abort-parse () (throw 'abort-parse (collect)))))))
 
 (defun parse-top-level-form (p tok)
   (case (token-type tok)
@@ -757,15 +757,15 @@ carry their own staff index)."
 
 (defun parse-file-events (p)
   (catch 'abort-parse
-    (let ((events nil))
+    (collecting
       (loop do
         (restart-case
             (if-let ((tok (peek-token p)))
-              (setf events (nreconc (parse-top-level-form p tok) events))
-              (return (nreverse events)))
+              (dolist (e (parse-top-level-form p tok)) (collect e))
+              (return))
           ;; Recovery: skip an unsupported top-level command and its args.
           (skip-command () (resync-command-args p))
           ;; Recovery: skip one unconsumed unexpected token.
           (skip-event () (resync-to-event-start p t))
           ;; Recovery: stop parsing and hand back whatever was parsed so far.
-          (abort-parse () (throw 'abort-parse (nreverse events))))))))
+          (abort-parse () (throw 'abort-parse (collect))))))))
