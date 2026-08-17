@@ -221,12 +221,12 @@ to have a closing tag even when it has no children."
 
 (defun emit-mark-containers (marks)
   (let ((marks (remove-if-not #'mark-p marks)))
-    (loop for container in +mark-container-order+
-          for group = (remove-if-not
-                       (lambda (mark)
-                         (string= (cdr (assoc (mark-kind mark)
-                                              +mark-container+))
-                                  container))
+     (loop for container in +mark-container-order+
+           for group = (remove-if-not
+                        (lambda (mark)
+                          (string= (assocdr (mark-kind mark)
+                                               +mark-container+)
+                                   container))
                        marks)
           when group
           collect (emit-mark-group container group))))
@@ -338,8 +338,8 @@ to have a closing tag even when it has no children."
         collect (el :direction (:placement "above")
                     (el :direction-type nil
                         (el (intern (string-upcase
-                                     (cdr (assoc (mark-kind mark)
-                                                 +direction-container+)))
+                                     (assocdr (mark-kind mark)
+                                                 +direction-container+))
                                     "KEYWORD")
                             nil
                             (emit-mark mark))))))

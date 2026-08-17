@@ -80,4 +80,4 @@
 (defun lookup-mark (command)
   "Return the MARK descriptor (KIND XML-TAG . PROPS) for a LilyPond command
 name keyword, or NIL if COMMAND is not an expressive mark."
-  (cdr (assoc command +mark-commands+)))
+  (assocdr command +mark-commands+))
