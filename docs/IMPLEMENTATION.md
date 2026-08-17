@@ -56,10 +56,12 @@ convert-string / convert-file
 `\time`, `\key`, `\clef`, and bar checks are first-class events too:
 `time-change` (beats/beat-type), `key-change` (pitch/mode), `clef-change`
 (clef/octave-shift), and `barline`. `build-score` dispatches over them with a
-single `etypecase`.
+single `etypecase-of` (the `event` type).
 
-Dependency: `alexandria` (used for `when-let`/`if-let` in the parser); there is
-no runtime dependency on LilyPond.
+Dependency: `alexandria` (used for `when-let`/`if-let` in the parser) and
+`serapeum` (used for `etypecase-of`, `assocdr`, `ensure`, `collecting`,
+`filter-map`, `in`, and `defconst`); there is no runtime dependency on
+LilyPond.
 
 ### Public API (`src/main.lisp`)
 
