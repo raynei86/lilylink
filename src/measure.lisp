@@ -41,7 +41,10 @@ measure length integral in division units (i.e. 4*2^log divisible by each
         (key-change nil)
         (clef-change nil)
         (tempo-change nil)
-        (barline nil)))))
+        (barline nil)
+        (repeat-barline nil)
+        (ending nil)
+        (measure-repeat nil)))))
 
 (defun group-by-staff (events)
   "Partition EVENTS by their staff index, returning ((staff . events) ...)
@@ -95,7 +98,26 @@ ordered by staff number."
          ;; current measure of voice 1, without advancing any voice cursor.
          (place-direction (ev)
            (push ev (measure-events (ensure-measure
-                                     (car (voice-cursor 1))))))
+                                      (car (voice-cursor 1))))))
+
+         ;; Attach a repeat/ending marker to the left or right barline of a
+         ;; measure.  LEFT markers apply to the measure being built; RIGHT
+         ;; markers to the most recently created measure.
+         (attach-left-barline (marker)
+           (let ((m (ensure-measure (car (voice-cursor 1)))))
+             (setf (measure-left-barline m)
+                   (append (measure-left-barline m) (list marker)))))
+
+         (attach-right-barline (marker)
+           (let ((m (car (last measures))))
+             (when m
+               (setf (measure-right-barline m)
+                     (append (measure-right-barline m) (list marker))))))
+
+         (place-measure-repeat (marker)
+           (setf (measure-measure-repeat
+                  (ensure-measure (car (voice-cursor 1))))
+                 marker))
 
          (advance-voice (voice)
            (let ((cursor (voice-cursor voice)))
@@ -246,7 +268,16 @@ ordered by staff number."
           (tempo-change (place-direction ev))
           (note (place-note ev (note-voice ev)))
           (rest-event (place-rest ev (rest-voice ev)))
-          (chord (place-chord ev (chord-voice ev))))
+          (chord (place-chord ev (chord-voice ev)))
+          (repeat-barline
+           (if (eq (repeat-direction ev) :forward)
+               (attach-left-barline ev)
+               (attach-right-barline ev)))
+          (ending
+           (if (eq (ending-type ev) :start)
+               (attach-left-barline ev)
+               (attach-right-barline ev)))
+          (measure-repeat (place-measure-repeat ev)))
         (typecase ev
           (note (flush-voice (note-voice ev)))
           (rest-event (flush-voice (rest-voice ev)))

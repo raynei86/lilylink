@@ -299,3 +299,24 @@
       (ok (search "<articulations><staccato/></articulations>" xml))
       (ok (search "<articulations><tenuto/></articulations>" xml))
       (ok (search "<clef><sign>F</sign><line>4</line></clef>" xml)))))
+
+(deftest convert-repeats
+  (testing "volta repeats emit repeat and ending barlines"
+    (let ((xml (lilylink:convert-string
+                "{ c4 \\repeat volta 2 { d4 | } \\alternative { \\volta 1 { f4 } \\volta 2 { g4 } } }")))
+      (ok (search "<repeat direction=\"forward\"/>" xml))
+      (ok (search "<repeat direction=\"backward\" times=\"2\"/>" xml))
+      (ok (search "<ending number=\"1\" type=\"start\"/>" xml))
+      (ok (search "<ending number=\"2\" type=\"stop\"/>" xml))))
+  (testing "percent repeats emit measure-repeat"
+    (let ((xml (lilylink:convert-string "{ \\repeat percent 3 { c4 | } }")))
+      (ok (search "<measure-repeat type=\"start\" slashes=\"3\"/>" xml))))
+  (testing "full-measure rests emit measure=yes"
+    (let ((xml (lilylink:convert-string "{ \\time 4/4 R1 }")))
+      (ok (search "<rest measure=\"yes\"/>" xml))))
+  (testing "variables convert end-to-end"
+    (let ((xml (lilylink:convert-string
+                "melody = \\relative c' { c4 d e f }
+\\score { << \\new Staff \\melody >> }")))
+      (ok (search "<part id=\"P1\">" xml))
+      (ok (search "<step>C</step>" xml)))))

@@ -83,10 +83,24 @@ LilyPond.
 | `%` line comments | Skipped by the lexer. |
 | `%{ ... %}` block comments | Skipped by the lexer. |
 | `\version "…"` | Consumed and ignored. |
+| `\language "english"` | Consumed and ignored (English short note names are recognised regardless; see Notes and pitches). |
 | `\header { … }` | Block is skipped entirely (metadata is not emitted). |
 | `\layout { … }`, `\midi { … }`, `\paper { … }` | Blocks are skipped. |
 | `\score { … }` | Inner music is parsed; `\layout`/`\midi` inside are skipped. |
 | bare `{ … }` | Parsed as absolute-mode music. |
+| `name = music` / `\name` | Variable definitions and references. The value is stored as a token range and re-parsed at each use site, so relative context is re-established and forward references and nesting work. References may appear anywhere music is expected (braced blocks, `\new` context bodies, voices). |
+| `\new PianoStaff \with { … } << … >>` | `\with { … }` blocks are skipped (context property settings). |
+
+### Variable definitions and references
+
+- `global = { … }`, `right = \relative c' { … }`, `\global`, `\right`, `\left`.
+- The value of a definition is any music expression; it is stored unparsed and
+  re-parsed at each `\name` reference (matching LilyPond's "music is
+  unevaluated" semantics), so a `\relative` inside a value is self-contained
+  and a bare `{ … }` value is absolute.
+- References work inside braced blocks, `\new` context bodies, and voice
+  expressions. Cyclic references are a parse error; forward references are
+  resolved by a normal top-to-bottom pass.
 
 ### Notes and pitches
 
@@ -95,6 +109,11 @@ LilyPond.
   `is` (sharp), `es` (flat), `isis` (double sharp), `eses` (double flat).
   Repeated suffixes chain, so `cisis`, `aeses`, etc. work. Alterations are
   stored in semitones.
+- English short accidentals are also recognised (the `english` note-name
+  table): `bf`/`ef`/`cf`/`df`/`ff`/`gf`/`af` = flats and
+  `cs`/`ds`/`fs`/`gs`/`bs` = sharps, along with `es` = e-flat and
+  `as` = a-flat. Recognition is table-driven (`+note-names+` in
+  `src/lexer.lisp`).
 - Octave marks after the name: `'` raises one octave, `,` lowers one; they
   combine (`c''`, `c,,`). Unmarked pitches default to the octave below middle
   C (scientific octave 3).
@@ -147,6 +166,9 @@ LilyPond.
 - `r` (with optional duration) produces a normal MusicXML rest.
 - `s` (spacer) is accepted but treated identically to `r` — it is emitted as
   a normal rest, not an invisible one.
+- `R` (full-measure rest), with an optional `*N` multiplier: `R1`, `R1*7`,
+  `R2` … Each expands into the given number of rest events marked as
+  full-measure, emitted as `<rest measure="yes"/>`.
 
 ### Chords
 
@@ -173,6 +195,22 @@ LilyPond.
 - `\clef treble | alto | tenor | bass` — base clefs, plus octave-shift
   suffixes `_8`/`^8`/`_15`/`^15` (quoted or bare, e.g. `\clef "treble_8"`).
   Clef changes mid-piece emit `<attributes>` in the correct measure.
+- `\sectionLabel "…"` is consumed and ignored.
+
+### Repeats
+
+- `\repeat volta N { body }` emits a forward `<repeat>` barline at the start
+  of the region and a backward `<repeat direction="backward" times="N"/>`
+  at the end; the body music is written once.
+- `\alternative { \volta 1 { … } \volta 2 { … } }` (inside the repeat body,
+  as in LilyPond) emits `<ending number="K" type="start|stop"/>` barlines
+  around each ending.
+- `\repeat percent N { body }` emits a MusicXML 3.1
+  `<measure-repeat type="start" slashes="N"/>` on the first measure of the
+  region.
+- Repeat structure (which measures the forward/backward/ending barlines land
+  on) is inferred from the event stream; `\repeat` regions are expected to
+  align with bar checks.
 
 ### MusicXML emission
 
@@ -267,7 +305,9 @@ chapters:
 
 ### Repeats (ch. 4)
 
-- `\repeat`, `\alternative`, `\volta`, segno/coda structures.
+- `\repeat volta`/`\alternative`/`\volta`/`\repeat percent` are supported (see
+  Repeats above). Not supported: segno/coda structures, `\repeat unfold`,
+  `\repeat tremolo`.
 
 ### Simultaneous notes (ch. 5)
 
@@ -289,8 +329,8 @@ chapters:
 - Multiple staves: `\new Staff { … }` and `\new PianoStaff << \new Staff { … }
   \new Staff { … } >>` produce one MusicXML part per staff, each with its own
   clef/key/time attributes. `\new Voice { … }` is accepted (a voice on the
-  current staff). Unsupported: `\new ChoirStaff`, `\with`, instrument names,
-  staff groups/`<part-group>`.
+  current staff). `\with { … }` blocks are skipped. Unsupported:
+  `\new ChoirStaff`, instrument names, staff groups/`<part-group>`.
 - `\key` church modes (`\ionian` `\dorian` `\phrygian` `\lydian`
   `\mixolydian` `\aeolian` `\locrian`) and custom modes.
 
@@ -369,17 +409,23 @@ closing delimiter was required — are always hard `lilylink-parse-error`s.
   `<sound>`), multi-staff (`\new Staff`/`\new PianoStaff`, per-staff clefs,
   full piano-score round-trip), error handling (condition hierarchy,
   warning messages, strict vs. lenient mode, `skip-event`/`skip-command`/
-  `abort-parse` restarts), and MusicXML emission (structure, attributes,
+  `abort-parse` restarts), English short note names, variables, `\with`,
+  full-measure rests, repeats/volta/percent (markers + `<repeat>`/`<ending>`/
+  `<measure-repeat>` XML), and MusicXML emission (structure, attributes,
   dotted notes, rests, chords, tie and mark markers, `\score` wrappers, file
   round-trip).
 - Relative-octave behavior was cross-validated against the real `lilypond`
   binary (via `\displayMusic` and MIDI output), including the counterintuitive
   chord-octave-mark results and the "nested `\relative` leaves the enclosing
   reference untouched" behavior.
+- `tests/起风了.ly` is a full two-hand piano score fixture exercising
+  variables, `\with`, English short note names, repeats/volta/percent,
+  full-measure rests, dynamics, slurs/hairpins, and multi-staff output; it
+  converts end-to-end to valid MusicXML.
 
 ## Roadmap (suggested order)
 
-1. Staff groups (`\new ChoirStaff`), `\with`, instrument names, `<part-group>`.
+1. Staff groups (`\new ChoirStaff`), instrument names, `<part-group>`.
 2. `\partcombine` and the chord-forming `<< {a} {b} >>`.
 3. `\chordmode` and lyrics.
 4. `\transpose` and quarter-tone accidentals.

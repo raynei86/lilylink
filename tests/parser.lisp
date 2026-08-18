@@ -352,3 +352,49 @@
                                (lilylink:parse-music "{ \\transpose }"))
                               nil)
           (lilylink:lilylink-parse-error () t)))))
+
+(deftest variables
+  (testing "a definition and reference splice events"
+    (ok (= 4 (length (lilylink:parse-music "melody = { c4 d e f } { \\melody }")))))
+  (testing "variables can reference other variables"
+    (let ((events (lilylink:parse-music
+                   "global = { \\time 4/4 }
+x = \\relative c' { \\global c4 d }
+{ \\x }")))
+      (ok (= 3 (length events)))
+      (ok (typep (first events) 'lilylink::time-change))))
+  (testing "a \\new Staff body can be a variable"
+    (ok (= 3 (length (lilylink:parse-music
+                      "x = \\relative c' { c4 d e }
+\\score { << \\new Staff \\x >> }"))))))
+
+(deftest with-blocks
+  (testing "\\with blocks after \\new are skipped"
+    (ok (handler-case
+            (progn (lilylink:parse-music
+                    "\\score { << \\new PianoStaff \\with { instrumentName = \"Piano\" } << \\new Staff { c4 } \\new Staff { c4 } >> >> }")
+                   t)
+          (lilylink:lilylink-error () nil)))))
+
+(deftest full-measure-rests
+  (testing "R1*7 expands to seven full-measure rests"
+    (let ((events (lilylink:parse-music "\\relative c' { R1*7 c4 }")))
+      (ok (= 8 (length events)))
+      (ok (every (lambda (e) (typep e 'lilylink::rest-event)) (subseq events 0 7)))
+      (ok (every (lambda (e) (lilylink::rest-full-measure-p e)) (subseq events 0 7))))))
+
+(deftest repeats
+  (testing "volta repeat emits forward and backward markers"
+    (let ((events (lilylink:parse-music
+                   "{ c4 \\repeat volta 2 { d4 | e4 | } \\alternative { \\volta 1 { f4 | } \\volta 2 { g4 | } } a4 }")))
+      (ok (some (lambda (e) (and (typep e 'lilylink::repeat-barline)
+                                 (eq (lilylink::repeat-direction e) :forward)))
+                events))
+      (ok (some (lambda (e) (and (typep e 'lilylink::repeat-barline)
+                                 (eq (lilylink::repeat-direction e) :backward)
+                                 (= (lilylink::repeat-times e) 2)))
+                events))
+      (ok (= 4 (count-if (lambda (e) (typep e 'lilylink::ending)) events)))))
+  (testing "percent repeat emits a measure-repeat marker"
+    (let ((events (lilylink:parse-music "{ \\repeat percent 3 { c4 | } }")))
+      (ok (some (lambda (e) (typep e 'lilylink::measure-repeat)) events)))))

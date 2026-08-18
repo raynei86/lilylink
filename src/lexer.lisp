@@ -27,6 +27,25 @@
                          num +max-duration-log+))
     log))
 
+(defconst +note-names+
+  '(("c" . (0 . 0)) ("d" . (1 . 0)) ("e" . (2 . 0)) ("f" . (3 . 0))
+    ("g" . (4 . 0)) ("a" . (5 . 0)) ("b" . (6 . 0))
+    ;; Dutch-style accidentals (long forms).
+    ("cis" . (0 . 1)) ("dis" . (1 . 1)) ("eis" . (2 . 1)) ("fis" . (3 . 1))
+    ("gis" . (4 . 1)) ("ais" . (5 . 1)) ("bis" . (6 . 1))
+    ("ces" . (0 . -1)) ("des" . (1 . -1)) ("es" . (2 . -1)) ("fes" . (3 . -1))
+    ("ges" . (4 . -1)) ("as" . (5 . -1)) ("bes" . (6 . -1))
+    ("ees" . (2 . -1)) ("aes" . (5 . -1))
+    ("cisis" . (0 . 2)) ("disis" . (1 . 2)) ("eisis" . (2 . 2)) ("fisis" . (3 . 2))
+    ("gisis" . (4 . 2)) ("aisis" . (5 . 2)) ("bisis" . (6 . 2))
+    ("ceses" . (0 . -2)) ("deses" . (1 . -2)) ("eses" . (2 . -2)) ("feses" . (3 . -2))
+    ("geses" . (4 . -2)) ("ases" . (5 . -2)) ("beses" . (6 . -2))
+    ;; English-style short accidentals (letter + s/f).
+    ("cs" . (0 . 1)) ("ds" . (1 . 1)) ("fs" . (3 . 1)) ("gs" . (4 . 1))
+    ("bs" . (6 . 1))
+    ("cf" . (0 . -1)) ("df" . (1 . -1)) ("ef" . (2 . -1)) ("ff" . (3 . -1))
+    ("gf" . (4 . -1)) ("af" . (5 . -1)) ("bf" . (6 . -1))))
+
 (defun tokenize (string)
   "Tokenize a LilyPond source string into a list of TOKEN structs."
   (let ((len (length string))
@@ -85,27 +104,12 @@
              (scan-number ()
                (multiple-value-bind (num dots) (scan-digits-and-dots)
                  (push-tok :number (cons num dots))))
-             (note-parts (run)
-               ;; Returns (values step alter fullp) for a letter run, or nil.
-               (let ((first (char run 0)))
-                 (if (and (char<= #\a first #\g))
-                     (let ((step (position first "cdefgab"))
-                           (alter 0)
-                           (p 1)
-                           (n (length run)))
-                       (iter (while (< p n))
-                             (cond
-                               ((and (< (1+ p) n)
-                                     (char= (char run p) #\i)
-                                     (char= (char run (1+ p)) #\s))
-                                (incf alter) (incf p 2))
-                               ((and (< (1+ p) n)
-                                     (char= (char run p) #\e)
-                                     (char= (char run (1+ p)) #\s))
-                                (decf alter) (incf p 2))
-                               (t (finish))))
-                       (values step alter (= p n)))
-                     (values nil nil nil))))
+              (note-parts (run)
+                ;; Returns (values step alter fullp) for a letter run, or nil.
+                (let ((entry (assoc run +note-names+ :test #'string=)))
+                  (if entry
+                      (values (cadr entry) (cddr entry) t)
+                      (values nil nil nil))))
              (scan-duration-parts ()
                ;; Called when a digit follows a pitch/rest with no whitespace.
                ;; Returns (LOG . DOTS) or NIL without emitting a token.
@@ -115,10 +119,12 @@
              (scan-note-or-rest (run)
                ;; After the letter run, octave marks, !/?, and adjacent duration.
                (let ((c (char run 0)))
-                 (cond
-                   ((and (member c '(#\r #\s)) (= (length run) 1))
-                    (push-tok :rest (scan-duration-parts)))
-                   (t
+                  (cond
+                    ((and (char= c #\R) (= (length run) 1))
+                     (push-tok :full-rest (scan-duration-parts)))
+                    ((and (member c '(#\r #\s)) (= (length run) 1))
+                     (push-tok :rest (scan-duration-parts)))
+                    (t
                     (multiple-value-bind (step alter fullp) (note-parts run)
                       (if (and step fullp)
                           (let ((mark 0))
@@ -139,11 +145,11 @@
                (let ((run (with-output-to-string (s)
                             (iter (while (and (peekc) (alpha-char-p (peekc))))
                                   (write-char (consume) s)))))
-                 (cond
-                   ((or (and (char<= #\a (char run 0) #\g))
-                        (member (char run 0) '(#\r #\s)))
-                    (scan-note-or-rest run))
-                   (t (scan-word run)))))
+                  (cond
+                    ((or (and (char<= #\a (char run 0) #\g))
+                         (member (char run 0) '(#\r #\s #\R)))
+                     (scan-note-or-rest run))
+                    (t (scan-word run)))))
               (scan-command ()
                (consume)  ; the backslash
                (let ((c (peekc)))
@@ -207,8 +213,9 @@
               ((char= c #\|) (consume) (push-tok :barline nil))
               ((char= c #\/) (consume) (push-tok :slash nil))
               ((char= c #\~) (consume) (push-tok :tie nil))
-              ((char= c #\=) (consume) (push-tok :equals nil))
-              ((char= c #\-) (scan-dash))
+               ((char= c #\=) (consume) (push-tok :equals nil))
+               ((char= c #\*) (consume) (push-tok :times nil))
+               ((char= c #\-) (scan-dash))
               ((char= c #\^) (consume) (push-tok :attach-up nil))
               ((char= c #\_) (consume) (push-tok :attach-down nil))
               ((char= c #\\) (scan-command))

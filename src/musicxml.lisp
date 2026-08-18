@@ -297,7 +297,9 @@ to have a closing tag even when it has no children."
 
 (defun emit-rest (rest divisions)
   (el :note nil
-      (el :rest nil)
+      (if (rest-full-measure-p rest)
+          (el :rest (:measure "yes"))
+          (el :rest nil))
       (el :duration nil (duration-in-divisions (rest-duration rest) divisions))
       (when *emit-voice* (el :voice nil (rest-voice rest)))
       (el :type nil (duration-type-name (duration-log (rest-duration rest))))
@@ -369,6 +371,29 @@ to have a closing tag even when it has no children."
     (destructuring-bind (sign line) (cdr entry)
       (values sign line))))
 
+(defun emit-repeat-barline (markers location)
+  "Emit a <barline> for the repeat/ending MARKERS at LOCATION (\"left\"/\"right\")."
+  (el :barline (:location location)
+      (when (some (lambda (m) (typep m 'repeat-barline)) markers)
+        (el :bar-style nil (if (string= location "left")
+                               "heavy-light" "light-heavy")))
+      (mapcar (lambda (m)
+                (etypecase m
+                  (repeat-barline
+                   (if (eq (repeat-direction m) :forward)
+                       (el :repeat (:direction "forward"))
+                       (el :repeat (:direction "backward"
+                                       :times (repeat-times m)))))
+                  (ending
+                   (el :ending (:number (ending-number m)
+                                 :type (ending-type m))))))
+              markers)))
+
+(defun emit-measure-repeat (mr)
+  (if (measure-repeat-slashes mr)
+      (el :measure-repeat (:type "start" :slashes (measure-repeat-slashes mr)))
+      (el :measure-repeat (:type "stop"))))
+
 (defun emit-attributes (data divisions)
   "Emit <attributes> from DATA, a plist snapshot of staff attributes."
   (let ((clef (getf data :clef))
@@ -394,6 +419,10 @@ to have a closing tag even when it has no children."
   (el :measure (:number (measure-number measure))
       (when (measure-attributes measure)
         (emit-attributes (measure-attr-data measure) divisions))
+      (when (measure-measure-repeat measure)
+        (emit-measure-repeat (measure-measure-repeat measure)))
+      (when (measure-left-barline measure)
+        (emit-repeat-barline (measure-left-barline measure) "left"))
       (let* ((events (measure-events measure))
              ;; Directions (tempo) are emitted before the voice-grouped notes.
              (directions (remove-if-not (lambda (ev) (typep ev 'tempo-change))
@@ -410,7 +439,9 @@ to have a closing tag even when it has no children."
                                     (list (el :backup nil
                                               (el :duration nil (nth (1- i) totals)))))
                                   (iter (for ev in (cdr group))
-                                        (appending (emit-event ev divisions))))))))))
+                                        (appending (emit-event ev divisions))))))))
+      (when (measure-right-barline measure)
+        (emit-repeat-barline (measure-right-barline measure) "right"))))
 
 (defun emit-event (ev divisions)
   "EVENT as a list of element strings (a chord expands to several notes, and

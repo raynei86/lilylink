@@ -76,3 +76,19 @@
                  '(:pitch :slur-open :pitch :phrase-close :pitch :wedge-start
                    :pitch :wedge-start :pitch :wedge-stop :pitch :phrase-open
                    :pitch :slur-close))))))
+
+(deftest tokenize-short-note-names
+  (testing "english short accidentals lex as pitches"
+    (let ((tokens (lilylink:tokenize "bf8 ef cs' fs")))
+      (ok (every (lambda (tok) (eq (lilylink::token-type tok) :pitch)) tokens))
+      (let ((vals (mapcar #'lilylink::token-value tokens)))
+        (ok (= (lilylink::pitch-token-step (first vals)) 6))
+        (ok (= (lilylink::pitch-token-alter (first vals)) -1))
+        (ok (= (lilylink::pitch-token-alter (second vals)) -1))
+        (ok (= (lilylink::pitch-token-alter (third vals)) 1))
+        (ok (= (lilylink::pitch-token-alter (fourth vals)) 1)))))
+  (testing "dutch long forms and words still work"
+    (let ((tokens (lilylink:tokenize "cis aes ees cisis global")))
+      (ok (every (lambda (tok) (eq (lilylink::token-type tok) :pitch))
+                 (subseq tokens 0 4)))
+      (ok (eq (lilylink::token-type (fifth tokens)) :word)))))

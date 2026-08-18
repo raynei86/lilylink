@@ -20,6 +20,7 @@
 
 (defclass rest-event ()
   ((duration :initarg :duration :accessor rest-duration)
+   (full-measure :initarg :full-measure :initform nil :accessor rest-full-measure-p)
    (attachments :initform nil :accessor rest-attachments)
    (voice :initarg :voice :initform 1 :accessor rest-voice)
    (staff :initarg :staff :initform 1 :accessor rest-staff)))
@@ -58,6 +59,17 @@
 (defclass barline ()
   ((voice :initarg :voice :initform 1 :accessor barline-voice)
    (staff :initarg :staff :initform 1 :accessor barline-staff)))
+
+(defclass repeat-barline ()
+  ((direction :initarg :direction :accessor repeat-direction)
+   (times :initarg :times :initform nil :accessor repeat-times)))
+
+(defclass ending ()
+  ((number :initarg :number :accessor ending-number)
+   (type :initarg :type :accessor ending-type)))
+
+(defclass measure-repeat ()
+  ((slashes :initarg :slashes :initform nil :accessor measure-repeat-slashes)))
 
 ;;; An attached expressive mark (articulation, ornament, dynamic, technical,
 ;;; or fermata).  KIND selects the MusicXML container, TAG is the XML element
@@ -101,7 +113,11 @@
   ((number :initarg :number :accessor measure-number)
    (events :initform nil :accessor measure-events)
    (attributes :initarg :attributes :initform nil :accessor measure-attributes)
-   (attr-data :initform nil :accessor measure-attr-data)))
+   (attr-data :initform nil :accessor measure-attr-data)
+   ;; Repeat/ending markers on the measure boundaries and percent repeats.
+   (left-barline :initform nil :accessor measure-left-barline)
+   (right-barline :initform nil :accessor measure-right-barline)
+   (measure-repeat :initform nil :accessor measure-measure-repeat)))
 
 (defclass staff ()
   ((clef :initarg :clef :initform :treble :accessor staff-clef)
@@ -193,15 +209,26 @@ moved into the mark's text slot."
 (defun make-barline (&optional (voice 1) (staff 1))
   (make-instance 'barline :voice voice :staff staff))
 
+(defun make-repeat-barline (direction &optional times)
+  (make-instance 'repeat-barline :direction direction :times times))
+
+(defun make-ending (number type)
+  (make-instance 'ending :number number :type type))
+
+(defun make-measure-repeat (&optional slashes)
+  (make-instance 'measure-repeat :slashes slashes))
+
 (defun make-tempo-change (&key text beat-unit per-minute (staff 1))
   (make-instance 'tempo-change :text text :beat-unit beat-unit
                  :per-minute per-minute :staff staff))
 
 ;;; The union of all events that flow through the parse/build/emit
 ;;; pipeline.  Used for exhaustive dispatch (etypecase-of).
+
 (deftype event ()
   '(or note rest-event chord barline
-    time-change key-change clef-change tempo-change))
+    time-change key-change clef-change tempo-change
+    repeat-barline ending measure-repeat))
 
 ;;; The events that survive into a measure's event list and are emitted
 ;;; as <note> elements (build-score turns time/key/clef changes into

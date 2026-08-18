@@ -28,7 +28,11 @@
   (voice 1)
   (staff 1)
   (max-staff 0)
-  (spanners (make-spanner-state)))
+  (spanners (make-spanner-state))
+  ;; Variable definitions: keyword name -> token vector of the value's music.
+  (symbols (make-hash-table :test #'eq))
+  ;; Names currently being expanded (cycle guard for variable references).
+  (parsing-symbols nil))
 
 (defun reset-spanner-state (p)
   "Drop all open spanners and the arpeggio direction."
@@ -74,6 +78,12 @@
   (let ((tok (peek-token p)))
     (and tok (member (token-type tok) types))))
 
+(defun peek-token-at (p offset)
+  "The token OFFSET positions past the parser's current position, or NIL."
+  (let ((i (+ (parser-pos p) offset)))
+    (when (< i (length (parser-tokens p)))
+      (aref (parser-tokens p) i))))
+
 (defun token-line-or-0 (tok)
   (if tok (token-line tok) 0))
 
@@ -95,9 +105,10 @@
 
 ;;; Token types that can start a fresh event/form, used by the recovery
 ;;; restarts to resynchronize after skipping past a bad construct.
+
 (defconst +event-start-types+
-  '(:pitch :rest :chord-open :number :barline :brace-close
-    :simult-close :voice-separator :command))
+  '(:pitch :rest :full-rest :chord-open :number :barline :brace-open
+    :brace-close :simult-close :voice-separator :command))
 
 (defun resync-to-event-start (p &optional (advance-one nil))
   "Best-effort recovery: advance past tokens that cannot start an event,
@@ -381,6 +392,69 @@ duration (LOG . DOTS) or NIL, updating the parser's last-duration."
       (setf (rest-voice rest) (parser-voice p))
       (parse-post-events p rest))))
 
+(defun parse-full-rest (p ctx)
+  "Parse a full-measure rest R<duration> (optionally multiplied by *N),
+returning a list of full-measure rest events."
+  (declare (ignore ctx))
+  (reset-spanner-state p)
+  (let* ((tok (advance-token p))
+         (duration (effective-duration p (token-value tok)))
+         (count (if (peek-type-p p :times)
+                    (progn (advance-token p)
+                           (car (token-value (expect-token p :number))))
+                    1)))
+    (let ((rests (iter (repeat count)
+                       (collect (let ((rest (make-rest duration (parser-staff p))))
+                                  (setf (rest-full-measure-p rest) t)
+                                  (setf (rest-voice rest) (parser-voice p))
+                                  rest)))))
+      ;; Attach any trailing post-events (dynamics, wedges) to the last rest.
+      (when rests
+        (parse-post-events p (car (last rests))))
+      rests)))
+
+(defun parse-repeat (p ctx)
+  "Parse \\repeat TYPE COUNT { body }, with an optional \\alternative block.
+Returns the repeat/ending marker events interleaved with the body music."
+  (let* ((type-word (token-value (advance-token p)))
+         (count (car (token-value (advance-token p))))
+         (type (intern (string-upcase type-word) "KEYWORD")))
+    (case type
+      (:volta
+       (let ((body (parse-brace-block p ctx))
+             (alternatives (if (and (peek-type-p p :command)
+                                    (eq (token-value (peek-token p)) :alternative))
+                               (progn (advance-token p) (parse-alternative p ctx))
+                               nil)))
+         (append (list (make-repeat-barline :forward))
+                 body
+                 alternatives
+                 (list (make-repeat-barline :backward count)))))
+      (:percent
+       (cons (make-measure-repeat count)
+             (parse-brace-block p ctx)))
+      (t (recover p 'skip-command "Unsupported \\repeat type \\~A" type-word)))))
+
+(defun parse-alternative (p ctx)
+  "Parse \\alternative { \\volta K { music } ... }.  Returns ending marker
+events interleaved with the alternative music."
+  (expect-token p :brace-open)
+  (let ((result nil))
+    (iter (while (and (peek-token p)
+                      (not (eq (token-type (peek-token p)) :brace-close))))
+          (let ((vtok (peek-token p)))
+            (unless (and (eq (token-type vtok) :command)
+                         (eq (token-value vtok) :volta))
+              (parser-error p "Expected \\volta in \\alternative"))
+            (advance-token p)  ; consume \volta
+            (let* ((number (car (token-value (advance-token p))))
+                   (num-str (format nil "~D" number)))
+              (setf result (append result (list (make-ending num-str :start))))
+              (setf result (append result (parse-brace-block p ctx)))
+              (setf result (append result (list (make-ending num-str :stop)))))))
+    (expect-token p :brace-close)
+    result))
+
 (defun parse-duration-event (p ctx)
   (declare (ignore ctx))
   (unless (parser-last-pitch p)
@@ -565,6 +639,11 @@ duration (LOG . DOTS) or NIL, updating the parser's last-duration."
         (advance-token p)
         (when (peek-type-p p :string)
           (advance-token p)))
+      ;; Skip an optional `\with { ... }` block (context property settings).
+      (when (and (peek-type-p p :command)
+                 (eq (token-value (peek-token p)) :with))
+        (advance-token p)
+        (skip-braced-block p))
       (case type
         (:staff
          (let ((old-staff (parser-staff p)))
@@ -580,19 +659,79 @@ duration (LOG . DOTS) or NIL, updating the parser's last-duration."
          (parse-context-body p ctx))
         (t (recover p 'skip-command "Unsupported \\new context \\~A" type))))))
 
-;;; Parse the music body of a \new Staff / \new Voice context: either a braced
-;;; block, or a \relative block.
-(defun parse-context-body (p ctx)
+(declaim (ftype (function (t) list) parse-file-events))
+
+(defun make-sub-parser (p tokens)
+  "A parser over TOKENS sharing variable definitions and mutable state with
+the parent parser P."
+  (let ((sub (make-parser tokens)))
+    (setf (parser-symbols sub) (parser-symbols p)
+          (parser-parsing-symbols sub) (parser-parsing-symbols p)
+          (parser-spanners sub) (parser-spanners p)
+          (parser-last-pitch sub) (parser-last-pitch p)
+          (parser-last-duration sub) (parser-last-duration p)
+          (parser-last-event sub) (parser-last-event p)
+          (parser-voice sub) (parser-voice p)
+          (parser-staff sub) (parser-staff p)
+          (parser-max-staff sub) (parser-max-staff p))
+    sub))
+
+(defun sync-parser-state (p sub)
+  "Copy the mutable parser state of SUB back into P."
+  (setf (parser-last-pitch p) (parser-last-pitch sub)
+        (parser-last-duration p) (parser-last-duration sub)
+        (parser-last-event p) (parser-last-event sub)
+        (parser-voice p) (parser-voice sub)
+        (parser-staff p) (parser-staff sub)
+        (parser-max-staff p) (parser-max-staff sub)))
+
+(defun expand-variable (p ctx name)
+  "Expand a variable reference \\NAME: re-parse the stored music in the
+current context and return the resulting events."
+  (declare (ignore ctx))
+  (when (member name (parser-parsing-symbols p))
+    (parser-error p "Cyclic variable reference \\~A" name))
+  (advance-token p)  ; consume the \name reference token
+  (let* ((value (gethash name (parser-symbols p)))
+         (sub (make-sub-parser p value)))
+    (push name (parser-parsing-symbols sub))
+    (unwind-protect
+         (prog1 (parse-file-events sub)
+           (sync-parser-state p sub))
+      (pop (parser-parsing-symbols sub)))))
+
+(defun parse-music-expression (p ctx)
+  "Parse one music expression starting at the current token: a braced block,
+\\relative block, << >> block, single event, or variable reference.  Returns
+the resulting events."
   (let ((tok (peek-token p)))
     (case (token-type tok)
-      (:brace-open
-       (parse-brace-block p ctx))
+      (:brace-open (parse-brace-block p ctx))
+      (:simult-open (advance-token p) (parse-simultaneous p ctx))
       (:command
-       (case (token-value tok)
-         (:relative (advance-token p) (parse-relative p))
-         (t (recover p 'skip-command "Unsupported command \\~A in a context"
-                     (token-value tok)))))
-      (t (recover p 'skip-event "Expected music after \\new")))))
+       (let ((name (token-value tok)))
+         (cond ((gethash name (parser-symbols p))
+                (expand-variable p ctx name))
+               ((eq name :relative)
+                (advance-token p)
+                (parse-relative p))
+               (t (recover p 'skip-command "Unsupported command \\~A" name)))))
+      (:pitch (list (track-last-event p (parse-note-event p ctx))))
+      (:rest (list (track-last-event p (parse-rest-event p ctx))))
+      (:full-rest (parse-full-rest p ctx))
+      (:number (list (track-last-event p (parse-duration-event p ctx))))
+      (:chord-open (list (track-last-event p (parse-chord p ctx))))
+      (t (recover p 'skip-event "Unexpected ~S" (token-type tok))))))
+
+;;; Parse the music body of a \new Staff / \new Voice context: either a braced
+;;; block, or a \relative block.
+
+(defun parse-context-body (p ctx)
+  "Parse the music body of a \\new Staff / \\new Voice context: a braced
+block, \\relative block, single event, or variable reference."
+  (if (peek-token p)
+      (parse-music-expression p ctx)
+      (recover p 'skip-event "Expected music after \\new")))
 
 (defun parse-voice-expression (p ctx voice-number)
   "Parse one voice inside << >>, isolating spanners from other voices."
@@ -601,20 +740,9 @@ duration (LOG . DOTS) or NIL, updating the parser's last-duration."
   (setf (parser-last-pitch p) nil)
   (setf (parser-last-duration p) nil)
   (consume-voice-style-commands p)
-  (let ((tok (peek-token p)))
-    (case (token-type tok)
-      (:brace-open
-       (parse-brace-block p ctx))
-      (:command
-       (case (token-value tok)
-         (:relative (advance-token p) (parse-relative p))
-         (t (recover p 'skip-command "Unsupported command \\~A in a voice"
-                     (token-value tok)))))
-      (:pitch (list (parse-note-event p ctx)))
-      (:rest (list (parse-rest-event p ctx)))
-      (:chord-open (list (parse-chord p ctx)))
-      (:number (list (parse-duration-event p ctx)))
-      (t (recover p 'skip-event "Expected a music expression in a voice")))))
+  (if (peek-token p)
+      (parse-music-expression p ctx)
+      (recover p 'skip-event "Expected a music expression in a voice")))
 
 (defun parse-simultaneous (p ctx)
   "Parse << expr1 \\\\ expr2 ... >> into a flat list of voice/staff-tagged
@@ -675,35 +803,45 @@ carry their own staff index)."
               (restart-case
                   (case (token-type tok)
                     (:command
-                     (advance-token p)
-                     (case (token-value tok)
-                       (:relative (parse-relative p))
-                       (:time (list (parse-time-args p)))
-                       (:key (list (parse-key-args p)))
-                       (:clef (list (parse-clef-args p)))
-                       (:tempo (list (parse-tempo-args p)))
-                       (:new (parse-new-command p ctx))
-                       (:header (skip-braced-block p))
-                       (:layout (skip-braced-block p))
-                       (:paper (skip-braced-block p))
-                       (:midi (skip-braced-block p))
-                       (:breathe
-                        (when (parser-last-event p)
-                          (push (make-mark '(:articulation "breath-mark"))
-                                (event-attachments (parser-last-event p))))
-                        nil)
-                       (:arpeggioarrowup
-                        (setf (spanner-state-arpeggio (parser-spanners p)) :up)
-                        nil)
-                       (:arpeggioarrowdown
-                        (setf (spanner-state-arpeggio (parser-spanners p)) :down)
-                        nil)
-                       (:arpeggionormal
-                        (setf (spanner-state-arpeggio (parser-spanners p)) nil)
-                        nil)
-                       (t (unless (member (token-value tok) +voice-style-commands+)
-                            (recover p 'skip-command "Unsupported command \\~A"
-                                     (token-value tok))))))
+                     (let ((name (token-value tok)))
+                       (if (gethash name (parser-symbols p))
+                           (expand-variable p ctx name)
+                           (progn
+                             (advance-token p)
+                             (case name
+                               (:relative (parse-relative p))
+                               (:time (list (parse-time-args p)))
+                               (:key (list (parse-key-args p)))
+                               (:clef (list (parse-clef-args p)))
+                               (:tempo (list (parse-tempo-args p)))
+                               (:new (parse-new-command p ctx))
+                               (:repeat (parse-repeat p ctx))
+                               (:alternative (parse-alternative p ctx))
+                               (:header (skip-braced-block p))
+                               (:layout (skip-braced-block p))
+                               (:paper (skip-braced-block p))
+                               (:midi (skip-braced-block p))
+                               (:sectionlabel
+                                (when (peek-type-p p :string)
+                                  (advance-token p))
+                                nil)
+                               (:breathe
+                                (when (parser-last-event p)
+                                  (push (make-mark '(:articulation "breath-mark"))
+                                        (event-attachments (parser-last-event p))))
+                                nil)
+                               (:arpeggioarrowup
+                                (setf (spanner-state-arpeggio (parser-spanners p)) :up)
+                                nil)
+                               (:arpeggioarrowdown
+                                (setf (spanner-state-arpeggio (parser-spanners p)) :down)
+                                nil)
+                               (:arpeggionormal
+                                (setf (spanner-state-arpeggio (parser-spanners p)) nil)
+                                nil)
+                               (t (unless (member (token-value tok) +voice-style-commands+)
+                                    (recover p 'skip-command "Unsupported command \\~A"
+                                             (token-value tok)))))))))
                     (:simult-open
                      (advance-token p)
                      (parse-simultaneous p ctx))
@@ -713,6 +851,7 @@ carry their own staff index)."
                               (list (make-barline (parser-voice p) (parser-staff p))))
                     (:pitch (list (track-last-event p (parse-note-event p ctx))))
                     (:rest (list (track-last-event p (parse-rest-event p ctx))))
+                    (:full-rest (parse-full-rest p ctx))
                     (:number (list (track-last-event p (parse-duration-event p ctx))))
                     (:chord-open (list (track-last-event p (parse-chord p ctx))))
                     (t (recover p 'skip-event "Unexpected ~S" (token-type tok))))
@@ -729,22 +868,56 @@ carry their own staff index)."
 (defun parse-top-level-form (p tok)
   (case (token-type tok)
     (:command
+     (let ((name (token-value tok)))
+       (if (gethash name (parser-symbols p))
+           (expand-variable p nil name)
+           (progn
+             (advance-token p)
+             (case name
+               (:version (when (eq (token-type (peek-token p)) :string)
+                           (advance-token p))
+                         nil)
+               (:language (when (eq (token-type (peek-token p)) :string)
+                            (advance-token p))
+                          nil)
+               (:header (skip-braced-block p) nil)
+               (:layout (skip-braced-block p) nil)
+               (:paper (skip-braced-block p) nil)
+               (:midi (skip-braced-block p) nil)
+               (:relative (parse-relative p))
+               (:score (parse-brace-block p nil))
+               (:new (parse-new-command p nil))
+               (:repeat (parse-repeat p nil))
+               (t (recover p 'skip-command "Unsupported top-level command \\~A"
+                           (token-value tok))))))))
+    (:word
+     ;; A variable definition: `name = music`.
+     (if (and (peek-token-at p 1)
+              (eq (token-type (peek-token-at p 1)) :equals))
+         (progn
+           (advance-token p)  ; the name
+           (advance-token p)  ; the =
+           (let ((start (parser-pos p))
+                 (value-tok (peek-token p)))
+             ;; Consume the value to find its extent (events discarded).
+             (when value-tok
+               (parse-top-level-form p value-tok))
+             (when (> (parser-pos p) start)
+               (setf (gethash (intern (string-upcase (token-value tok)) "KEYWORD")
+                              (parser-symbols p))
+                     (subseq (parser-tokens p) start (parser-pos p)))))
+           nil)
+         (recover p 'skip-event "Unexpected ~S at top level" (token-value tok))))
+    (:simult-open
      (advance-token p)
-     (case (token-value tok)
-       (:version (when (eq (token-type (peek-token p)) :string)
-                   (advance-token p))
-                 nil)
-       (:header (skip-braced-block p) nil)
-       (:layout (skip-braced-block p) nil)
-       (:paper (skip-braced-block p) nil)
-       (:midi (skip-braced-block p) nil)
-       (:relative (parse-relative p))
-       (:score (parse-brace-block p nil))
-       (:new (parse-new-command p nil))
-       (t (recover p 'skip-command "Unsupported top-level command \\~A"
-                   (token-value tok)))))
+     (parse-simultaneous p nil))
     (:brace-open
      (parse-brace-block p nil))
+    (:pitch (list (track-last-event p (parse-note-event p nil))))
+    (:rest (list (track-last-event p (parse-rest-event p nil))))
+    (:full-rest (parse-full-rest p nil))
+    (:number (list (track-last-event p (parse-duration-event p nil))))
+    (:chord-open (list (track-last-event p (parse-chord p nil))))
     (t (recover p 'skip-event "Unexpected ~S at top level" (token-type tok)))))
 
 (defun parse-file-events (p)
